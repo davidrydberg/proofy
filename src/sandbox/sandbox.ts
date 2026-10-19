@@ -1,0 +1,290 @@
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { stringify } from "yaml";
+import type { Config } from "../config.js";
+import { CliError } from "../errors.js";
+import { MOUNT, RUNNER } from "./contract.js";
+import { sandboxCompose, subnetFor, type Mode } from "./compose.js";
+import { tail, type Proc } from "./docker.js";
+
+export const PKG_DIR = fileURLToPath(new URL("../../", import.meta.url));
+
+export interface SandboxOptions {
+  /** Where the app's compose files resolve: the repository, or an exported pull request. */
+  sourceDir: string;
+  /** The e2e folder the tests and fakes come from. */
+  e2eDir: string;
+  /** Where the sandbox's own logs land: the run folder, or e2e/out for a dev sandbox. */
+  logDir: string;
+  config: Config;
+  mode: Mode;
+  /** Unique per sandbox; also the compose project name. */
+  project: string;
+  /** Shared by every run of this repository: the certificate authority. */
+  cacheDir: string;
+  env: NodeJS.ProcessEnv;
+  log: (line: string) => void;
+}
+
+export interface Sandbox {
+  project: string;
+  composeFile: string;
+  workDir: string;
+  notes: string[];
+}
+
+export function cacheDirFor(env: NodeJS.ProcessEnv, root: string): string {
+  const base = env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  return join(base, "proofy", createHash("sha256").update(root).digest("hex").slice(0, 12));
+}
+
+export function playwrightVersion(): string {
+  const require = createRequire(import.meta.url);
+  return (require("@playwright/test/package.json") as { version: string }).version;
+}
+
+export function runnerImage(): string {
+  return `mcr.microsoft.com/playwright:v${playwrightVersion()}-noble`;
+}
+
+export function standinImage(): string {
+  const pkg = createRequire(import.meta.url)(join(PKG_DIR, "package.json")) as { version: string };
+  return `proofy-standin:${pkg.version}`;
+}
+
+/** Install phase, with internet: images and builds. Nothing of the app runs yet. */
+export async function installImages(proc: Proc, options: SandboxOptions, sandbox: Sandbox): Promise<void> {
+  const { log } = options;
+  const standin = standinImage();
+  if ((await proc("docker", ["image", "inspect", standin])).code !== 0) {
+    log(`building ${standin}`);
+    await must(proc("docker", ["build", "-q", "-t", standin, "-f", join(PKG_DIR, "docker", "standin.Dockerfile"), join(PKG_DIR, "docker")]), "Building the fake-service image failed");
+  }
+  const runner = runnerImage();
+  if ((await proc("docker", ["image", "inspect", runner])).code !== 0) {
+    log(`pulling ${runner} (once, about 1.5 GB)`);
+    await must(proc("docker", ["pull", "-q", runner]), `Pulling ${runner} failed`);
+  }
+  log("building and pulling the app's images");
+  await must(proc("docker", [...compose(sandbox), "build", "--quiet"]), "Building the app's images failed");
+  await must(proc("docker", [...compose(sandbox), "pull", "--ignore-buildable", "--policy", "missing", "--quiet"]), "Pulling the app's images failed");
+  await mkdir(options.cacheDir, { recursive: true });
+  const ca = join(options.cacheDir, "ca");
+  await mkdir(ca, { recursive: true });
+  await must(
+    proc("docker", ["run", "--rm", "--user", hostUser(), "-v", `${ca}:${MOUNT.ca}`, "-v", `${PKG_DIR}:${MOUNT.pkg}:ro`, standin, "node", `${MOUNT.pkg}/dist/standin/server.js`, "ca"]),
+    "Creating the sandbox certificate authority failed",
+  );
+  await downloadAssets(options, sandbox);
+}
+
+/** Writes the sealed compose file and everything the containers mount. */
+export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0): Promise<Sandbox> {
+  const { config, sourceDir } = options;
+  if (config.compose.length === 0) {
+    throw new CliError("e2e/proofy.json lists no compose file", "CONFIG_INVALID", ['Ask your agent: "set up proofy" (Setup in e2e/AGENTS.md)']);
+  }
+  if (!config.app) {
+    throw new CliError("e2e/proofy.json has no app: the browser does not know where to start", "CONFIG_INVALID", ['Ask your agent: "set up proofy"']);
+  }
+  const workDir = join(options.cacheDir, "sandboxes", options.project);
+  await rm(workDir, { recursive: true, force: true });
+  const dirs = {
+    pkg: PKG_DIR.replace(/\/$/, ""),
+    ca: join(options.cacheDir, "ca"),
+    runSetup: join(workDir, "setup"),
+    out: join(workDir, "out"),
+    e2e: options.e2eDir,
+    work: join(workDir, "runner"),
+    nodeModules: join(workDir, "node_modules"),
+  };
+  for (const dir of [dirs.ca, dirs.runSetup, dirs.out, join(dirs.work, "exec"), join(dirs.nodeModules, "@davidrydberg"), join(dirs.nodeModules, "@playwright")]) {
+    await mkdir(dir, { recursive: true });
+  }
+  // Test files import "@davidrydberg/proofy/test"; Node finds it through /node_modules in the runner container.
+  await symlink(MOUNT.pkg, join(dirs.nodeModules, "@davidrydberg", "proofy"));
+  await symlink(`${MOUNT.pkg}/node_modules/@playwright/test`, join(dirs.nodeModules, "@playwright", "test"));
+
+  // An empty env file keeps compose from reading the repository's .env for interpolation. Relative paths in the
+  // compose files resolve against the first file's folder, as they do when the app is started by hand.
+  const emptyEnv = join(workDir, "empty.env");
+  await writeFile(emptyEnv, "");
+  const args = ["compose", ...config.compose.flatMap((file) => ["-f", join(sourceDir, file)]), "--env-file", emptyEnv];
+  const normalized = await proc("docker", [...args, "config", "--format", "json", "--no-env-resolution"]);
+  if (normalized.code !== 0) {
+    throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(normalized.stderr, 8)]);
+  }
+  const model = JSON.parse(normalized.stdout) as Record<string, unknown>;
+  const { subnet, standinIp } = subnetFor(options.project, attempt);
+  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), user: hostUser(), dirs });
+  const composeFile = join(workDir, "compose.yml");
+  await writeFile(composeFile, stringify(generated.compose));
+  const assets = Object.fromEntries(config.assets.map((url) => [assetKey(url), assetFile(url)]));
+  await writeFile(
+    join(dirs.runSetup, "standin.json"),
+    JSON.stringify({ hosts: config.hosts, assets, address: standinIp, standinsDir: `${MOUNT.e2e}/standins`, assetsDir: `${MOUNT.runSetup}/assets` }),
+  );
+  return { project: options.project, composeFile, workDir, notes: generated.notes };
+}
+
+/** Sealed phase: starts the app with no way out, waits for it, seeds the empty database. */
+export async function start(proc: Proc, options: SandboxOptions, sandbox: Sandbox): Promise<Sandbox> {
+  const { config, log } = options;
+  await mkdir(options.logDir, { recursive: true });
+  let current = sandbox;
+  for (let attempt = 0; ; attempt++) {
+    log("starting the sealed sandbox");
+    const up = await proc("docker", [...compose(current), "up", "-d", "--wait", "--wait-timeout", String(Math.round(config.limits.startMinutes * 60))], {
+      timeoutMs: config.limits.startMinutes * 60_000 + 30_000,
+    });
+    if (up.code === 0) break;
+    if (/overlap/i.test(up.stderr) && attempt < 5) {
+      await stop(proc, current);
+      current = await prepare(proc, options, attempt + 1);
+      continue;
+    }
+    throw new CliError(up.timedOut ? "The sandbox did not start in time" : "The sandbox did not start", "ENVIRONMENT_ERROR", [
+      tail(up.stderr || up.stdout, 12),
+      `Container logs: ${join(options.logDir, "sandbox.log")}`,
+    ]);
+  }
+  if (config.seed) {
+    log(`seeding: ${config.seed.command.join(" ")}`);
+    const seed = await proc("docker", [...compose(current), "exec", "-T", config.seed.service, ...config.seed.command], { timeoutMs: config.limits.startMinutes * 60_000 });
+    await writeFile(join(options.logDir, "seed.log"), `${seed.stdout}\n${seed.stderr}`);
+    if (seed.code !== 0) {
+      throw new CliError(`The seed command failed with exit code ${seed.code}`, "ENVIRONMENT_ERROR", [tail(seed.stderr || seed.stdout, 12), `Full output: ${join(options.logDir, "seed.log")}`]);
+    }
+  }
+  return current;
+}
+
+/** Runs Playwright in the runner container, answering exec() requests from the tests meanwhile. */
+export async function runTests(proc: Proc, options: SandboxOptions, sandbox: Sandbox, playwrightArgs: string[]): Promise<number> {
+  const bridge = startExecBridge(proc, options, sandbox);
+  try {
+    const limit = options.config.limits.maxRunMinutes;
+    const result = await proc(
+      "docker",
+      [...compose(sandbox), "run", "--rm", "-T", RUNNER, "node", `${MOUNT.pkg}/node_modules/@playwright/test/cli.js`, "test", "-c", `${MOUNT.work}/playwright.config.mjs`, ...playwrightArgs],
+      limit === undefined ? {} : { timeoutMs: limit * 60_000 },
+    );
+    await writeFile(join(sandbox.workDir, "out", "playwright.log"), `${result.stdout}\n${result.stderr}`);
+    if (result.timedOut) {
+      throw new CliError(`The run took longer than maxRunMinutes (${limit})`, "ENVIRONMENT_ERROR", ["Raise limits.maxRunMinutes in e2e/proofy.json or run fewer flows"]);
+    }
+    return result.code;
+  } finally {
+    await bridge.stop();
+  }
+}
+
+export async function saveLogs(proc: Proc, sandbox: Sandbox, dir: string): Promise<void> {
+  const logs = await proc("docker", [...compose(sandbox), "logs", "--no-color", "--timestamps"]);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "sandbox.log"), logs.stdout + logs.stderr);
+}
+
+export async function stop(proc: Proc, sandbox: Sandbox): Promise<void> {
+  await proc("docker", [...compose(sandbox), "down", "-v", "--remove-orphans", "--timeout", "5"], { timeoutMs: 120_000 });
+}
+
+export async function forwardedPorts(proc: Proc, sandbox: Sandbox): Promise<{ app?: string; mail?: string }> {
+  const port = async (inner: string) => {
+    const result = await proc("docker", [...compose(sandbox), "port", "proofy-forward", inner]);
+    const match = /:(\d+)\s*$/.exec(result.stdout.trim());
+    return match ? `http://127.0.0.1:${match[1]}` : undefined;
+  };
+  const app = await port("8080");
+  const mail = await port("8025");
+  return { ...(app ? { app } : {}), ...(mail ? { mail } : {}) };
+}
+
+export function hostUser(): string {
+  return `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
+}
+
+export function compose(sandbox: Pick<Sandbox, "project" | "composeFile">): string[] {
+  return ["compose", "-p", sandbox.project, "-f", sandbox.composeFile];
+}
+
+interface Bridge {
+  stop: () => Promise<void>;
+}
+
+// Tests ask for exec() by writing a request file to a folder shared with the host, which runs the named command
+// with docker compose exec. The runner container never gets access to Docker itself.
+function startExecBridge(proc: Proc, options: SandboxOptions, sandbox: Sandbox): Bridge {
+  const dir = join(sandbox.workDir, "runner", "exec");
+  let running = true;
+  const busy = new Set<string>();
+  const handle = async (file: string) => {
+    const id = file.slice(0, -".req.json".length);
+    const request = JSON.parse(await readFile(join(dir, file), "utf8")) as { name: string; args: string[] };
+    await rm(join(dir, file), { force: true });
+    const named = options.config.exec[request.name];
+    let response: Record<string, unknown>;
+    if (!named) {
+      response = { error: `exec("${request.name}") is not in e2e/proofy.json exec. Named commands: ${Object.keys(options.config.exec).join(", ") || "none"}` };
+    } else {
+      const result = await proc("docker", [...compose(sandbox), "exec", "-T", named.service, ...named.command, ...request.args], {
+        timeoutMs: options.config.limits.testMinutes * 60_000,
+      });
+      response = { code: result.code, stdout: result.stdout, stderr: result.stderr };
+    }
+    await writeFile(join(dir, `${id}.tmp`), JSON.stringify(response));
+    await rename(join(dir, `${id}.tmp`), join(dir, `${id}.res.json`));
+  };
+  const loop = (async () => {
+    while (running) {
+      let files: string[] = [];
+      try {
+        files = await readdir(dir);
+      } catch {
+        // The folder appears with the first request.
+      }
+      for (const file of files) {
+        if (!file.endsWith(".req.json") || busy.has(file)) continue;
+        busy.add(file);
+        void handle(file).finally(() => busy.delete(file));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  })();
+  return {
+    stop: async () => {
+      running = false;
+      await loop;
+    },
+  };
+}
+
+async function downloadAssets(options: SandboxOptions, sandbox: Sandbox): Promise<void> {
+  if (options.config.assets.length === 0) return;
+  const dir = join(sandbox.workDir, "setup", "assets");
+  await mkdir(dir, { recursive: true });
+  for (const url of options.config.assets) {
+    options.log(`downloading ${url}`);
+    const response = await fetch(url);
+    if (!response.ok) throw new CliError(`Downloading asset ${url} failed with HTTP ${response.status}`, "ENVIRONMENT_ERROR", ["Check the URL in e2e/proofy.json assets"]);
+    await writeFile(join(dir, assetFile(url)), Buffer.from(await response.arrayBuffer()));
+  }
+}
+
+function assetKey(url: string): string {
+  const parsed = new URL(url);
+  return `${parsed.hostname}${parsed.pathname}`;
+}
+
+function assetFile(url: string): string {
+  return createHash("sha256").update(assetKey(url)).digest("hex").slice(0, 24);
+}
+
+async function must(result: Promise<{ code: number; stderr: string; stdout: string }>, message: string): Promise<void> {
+  const done = await result;
+  if (done.code !== 0) throw new CliError(message, "ENVIRONMENT_ERROR", [tail(done.stderr || done.stdout, 12)]);
+}
