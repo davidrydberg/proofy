@@ -1,0 +1,9 @@
+services:
+  shop:
+    image: node:24-alpine
+    command: ["node", "/app/server.mjs"]
+    volumes: ["./server.mjs:/app/server.mjs:ro"]
+    ports: ["3000:3000"]
+    environment:
+      NODE_EXTRA_CA_CERTS: /proofy/ca.crt
+      SMTP_HOST: mailpit

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/@davidrydberg/proofy/schema/proofy.schema.json",
+  "compose": [
+    "compose.yml"
+  ],
+  "app": {
+    "service": "wordpress",
+    "port": 80,
+    "path": "/"
+  },
+  "hosts": {},
+  "seed": {
+    "service": "wordpress",
+    "command": [
+      "shop-seed"
+    ]
+  },
+  "exec": {
+    "wp": {
+      "service": "wordpress",
+      "command": [
+        "wp",
+        "--allow-root",
+        "--path=/var/www/html"
+      ]
+    }
+  }
+}

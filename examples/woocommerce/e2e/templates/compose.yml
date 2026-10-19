@@ -1,0 +1,33 @@
+# Example compose file for an app proofy can test.
+# proofy adds its own network, fakes, Mailpit and the browser around it. Keep this file about the app only.
+#
+# Rules for a sandbox-ready compose file:
+# - No named volumes for data: every run starts from an empty database.
+# - No published ports needed: the browser runs inside the sandbox. A published port is fine for your own use.
+# - Settings come from e2e/proofy.json "env", not from an env_file pointing at .env.
+# - The app trusts proofy's certificate authority, mounted at /proofy/ca.crt, so it accepts the fakes' HTTPS.
+
+services:
+  app:
+    build: .
+    depends_on: [db]
+    expose: ["8080"]
+    environment:
+      DB_HOST: db
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      # Trust proofy's certificate authority. Keep the lines for your stack:
+      # Node:
+      NODE_EXTRA_CA_CERTS: /proofy/ca.crt
+      # Python (requests, httpx):
+      # REQUESTS_CA_BUNDLE: /proofy/ca-bundle.crt
+      # SSL_CERT_FILE: /proofy/ca-bundle.crt
+      # PHP (curl, Guzzle): add to the image or entrypoint:
+      #   cp /proofy/ca.crt /usr/local/share/ca-certificates/proofy.crt && update-ca-certificates
+
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: app
+      MYSQL_ROOT_PASSWORD: sandbox
+    tmpfs: [/var/lib/mysql]
