@@ -110,3 +110,27 @@ describe("commands without Docker", () => {
     expect((await cli(["report", "nope"], dir)).code).toBe(2);
   });
 });
+
+describe("run --pr", () => {
+  it("exports the whole repository and finds the project in its subfolder", async () => {
+    const top = mkdtempSync(join(tmpdir(), "proofy-mono-"));
+    execFileSync("git", ["init", "-q", top]);
+    const app = join(top, "apps", "shop");
+    mkdirSync(join(app, "e2e/specs"), { recursive: true });
+    writeFileSync(join(app, "e2e/proofy.json"), JSON.stringify({ compose: ["compose.yml"] }));
+    const calls: string[] = [];
+    const proc: Proc = async (program, args) => {
+      calls.push(`${program} ${args.join(" ")}`);
+      if (program === "gh") return { code: 0, stdout: JSON.stringify({ number: 7, headRefOid: "f00d", url: "https://example.test/pr/7" }), stderr: "", timedOut: false };
+      if (program === "tar") {
+        const dir = args[args.indexOf("-C") + 1]!;
+        mkdirSync(join(dir, "apps/shop/e2e/specs"), { recursive: true });
+        writeFileSync(join(dir, "apps/shop/e2e/specs/checkout.md"), "R1. Works.\n");
+      }
+      return { code: 0, stdout: "", stderr: "", timedOut: false };
+    };
+    const result = await cli(["run", "checkout", "--pr", "7"], app, proc);
+    expect(result.out).toContain("checkout has requirements but no test yet");
+    expect(calls.find((call) => call.includes(" archive "))).toContain(`git -C ${execFileSync("git", ["-C", top, "rev-parse", "--show-toplevel"]).toString().trim()} archive`);
+  });
+});
