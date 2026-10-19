@@ -14,7 +14,11 @@ Every outside call goes to a fake the agent wrote from the provider's docs, gets
 npm i -g @davidrydberg/proofy
 ```
 
-Before the first npm release, install from GitHub: `npm i -g github:davidrydberg/proofy`.
+From source:
+
+```sh
+git clone https://github.com/davidrydberg/proofy && cd proofy && npm ci && npm run build && npm link
+```
 
 ## Requirements
 
