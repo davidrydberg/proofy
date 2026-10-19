@@ -14,6 +14,8 @@ Every outside call goes to a fake the agent wrote from the provider's docs, gets
 npm i -g @davidrydberg/proofy
 ```
 
+Before the first npm release, install from GitHub: `npm i -g github:davidrydberg/proofy`.
+
 ## Requirements
 
 - Node 24 or newer
@@ -50,7 +52,7 @@ guest-checkout  passed
 ```
 
 Exit codes: 0 pass, 1 an approved flow failed, 2 usage or config, 3 the sandbox failed, 4 not approved.
-`examples/woocommerce` is a complete shop with two flows.
+`examples/woocommerce` is a complete shop with two flows, and [pull request 1](https://github.com/davidrydberg/proofy/pull/1) shows a report posted with `--post`.
 `prd.md` has the full design.
 
 The agent instructions say only you run `proofy approve`.
