@@ -10,15 +10,13 @@ Every outside call goes to a fake the agent wrote from the provider's docs, gets
 
 ## Install
 
-```sh
-npm i -g @davidrydberg/proofy
-```
-
-From source:
+proofy is not on npm yet. Install it from source:
 
 ```sh
 git clone https://github.com/davidrydberg/proofy && cd proofy && npm ci && npm run build && npm link
 ```
+
+Once it is published, `npm i -g @davidrydberg/proofy` will work.
 
 ## Requirements
 
