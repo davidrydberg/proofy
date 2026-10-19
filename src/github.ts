@@ -42,7 +42,7 @@ export async function pullRequest(proc: Proc, root: string, number?: number): Pr
   return { number: parsed.number, sha: parsed.headRefOid, url: parsed.url };
 }
 
-/** The pull request's files in a folder of their own. The working copy is never touched. */
+/** The pull request's files in a folder of their own. The working copy is never touched. `root` is the repository's top folder. */
 export async function exportPullRequest(proc: Proc, root: string, pr: PullRequest, dir: string): Promise<void> {
   const fetch = await proc("git", ["-C", root, "fetch", "--quiet", "origin", `refs/pull/${pr.number}/head`], { timeoutMs: 300_000 });
   if (fetch.code !== 0) {

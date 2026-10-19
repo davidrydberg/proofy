@@ -49,9 +49,10 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
     pr = await pullRequest(deps.proc, root, prNumber);
     const dir = join(project.cacheDir, "pull-requests", String(pr.number));
     deps.log(`exporting pull request #${pr.number} (${pr.sha.slice(0, 12)})`);
-    await exportPullRequest(deps.proc, root, pr, dir);
     // The project can sit in a subfolder of the repository; the export holds the whole repository.
-    source = pathsFor(join(dir, relative((await gitRoot(root)) ?? root, root)));
+    const top = (await gitRoot(root)) ?? root;
+    await exportPullRequest(deps.proc, top, pr, dir);
+    source = pathsFor(join(dir, relative(top, root)));
     if (await exists(source.config)) config = await loadConfig(source.config, `e2e/proofy.json in PR #${pr.number}`);
     sourceInfo = { commit: pr.sha, pr: pr.number };
   } else {
