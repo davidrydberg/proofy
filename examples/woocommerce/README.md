@@ -1,6 +1,6 @@
 # WooCommerce demo
 
-A coffee shop on WordPress and WooCommerce, tested with proofy.
+A coffee shop on WordPress and WooCommerce, tested with proofy in a sealed sandbox.
 Everything under `e2e/` was written by an agent following `e2e/AGENTS.md`: requirements first, then the test, then three identical runs, then a second opinion.
 
 ## Run it
