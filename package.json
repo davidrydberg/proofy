@@ -1,0 +1,70 @@
+{
+  "name": "@davidrydberg/proofy",
+  "version": "0.1.0",
+  "description": "Sealed end-to-end tests that your coding agent writes and you approve: requirements in plain words, evidence and screenshots per requirement.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davidrydberg/proofy.git"
+  },
+  "homepage": "https://github.com/davidrydberg/proofy#readme",
+  "bugs": {
+    "url": "https://github.com/davidrydberg/proofy/issues"
+  },
+  "author": "David Rydberg <david@davidrydberg.dev>",
+  "type": "module",
+  "bin": {
+    "proofy": "dist/bin/proofy.js"
+  },
+  "exports": {
+    "./test": {
+      "types": "./dist/test/index.d.ts",
+      "default": "./dist/test/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "docker",
+    "schema",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "cli",
+    "agents",
+    "e2e",
+    "end-to-end",
+    "playwright",
+    "docker",
+    "testing"
+  ],
+  "scripts": {
+    "build": "rm -rf dist schema && tsc -p tsconfig.build.json && chmod +x dist/bin/proofy.js && node scripts/schema.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build",
+    "test:docker": "npm run build && vitest run --config vitest.docker.config.ts"
+  },
+  "dependencies": {
+    "@playwright/test": "1.64.1",
+    "@toon-format/toon": "^4.4.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5"
+  }
+}

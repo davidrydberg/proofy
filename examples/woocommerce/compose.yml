@@ -1,0 +1,31 @@
+services:
+  wordpress:
+    build: .
+    ports: ["8080:80"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: shop
+      WORDPRESS_DB_USER: shop
+      WORDPRESS_DB_PASSWORD: shop
+      SMTP_HOST: mailpit
+    # The image copies WordPress into place on first start; ready once wp-config.php exists.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/www/html/wp-config.php"]
+      interval: 2s
+      retries: 60
+
+  db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: shop
+      MARIADB_USER: shop
+      MARIADB_PASSWORD: shop
+      MARIADB_ROOT_PASSWORD: root
+    tmpfs: [/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 60

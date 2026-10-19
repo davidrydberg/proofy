@@ -1,0 +1,35 @@
+{
+  "compose": [
+    "compose.yml"
+  ],
+  "app": {
+    "service": "shop",
+    "port": 3000
+  },
+  "exec": {
+    "order": {
+      "service": "shop",
+      "command": [
+        "wget",
+        "-q",
+        "-O",
+        "-"
+      ]
+    },
+    "reach": {
+      "service": "shop",
+      "command": [
+        "wget",
+        "-q",
+        "-T",
+        "3",
+        "-O",
+        "-"
+      ]
+    }
+  },
+  "hosts": {
+    "api.payments.test": "fake",
+    "tracker.example.com": "record"
+  }
+}
