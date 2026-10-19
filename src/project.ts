@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -30,7 +30,8 @@ export async function gitRoot(cwd: string): Promise<string | undefined> {
  */
 export async function findRoot(cwd: string): Promise<string> {
   const top = await gitRoot(cwd);
-  let dir = resolve(cwd);
+  // git reports real paths, so compare against the real path of cwd, not a symlinked one such as /var on macOS.
+  let dir = await realpath(cwd).catch(() => resolve(cwd));
   for (;;) {
     if (await exists(join(dir, "e2e", "proofy.json"))) return dir;
     const parent = dirname(dir);
