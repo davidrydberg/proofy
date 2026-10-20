@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -128,6 +128,18 @@ describe("sandbox", () => {
     });
     // A compose version that words the warning otherwise refuses nothing more: STRIPE_KEY stays blank.
     await expect(prepare(proc('level=warning msg="STRIPE_KEY is unset, using an empty string"'), options(dir, { env: { web: { DATA: "/data" } } }))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+  });
+
+  it("refuses a build context that is a symlink inside the repository pointing outside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-context-"));
+    const outside = mkdtempSync(join(tmpdir(), "proofy-outside-"));
+    mkdirSync(join(dir, "app"));
+    symlinkSync(outside, join(dir, "ctx"));
+    const model = (build: Record<string, unknown>) => ({ services: { web: { image: "shop", build } } });
+    const proc = (build: Record<string, unknown>): Proc => async () => ok(JSON.stringify(model(build)));
+    await expect(prepare(proc({ context: join(dir, "app"), additional_contexts: { later: join(dir, "not-yet") } }), options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+    await expect(prepare(proc({ context: join(dir, "ctx") }), options(dir, {}))).rejects.toThrow(/sets build\.context .*ctx, which would give the image build host files outside the repository/);
+    await expect(prepare(proc({ context: join(dir, "app"), additional_contexts: { keys: join(dir, "ctx") } }), options(dir, {}))).rejects.toThrow(/sets build\.additional_contexts\.keys/);
   });
 
   it("refuses an included compose file that would take settings from an env file", async () => {
