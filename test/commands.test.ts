@@ -200,6 +200,17 @@ describe("commands without Docker", () => {
     expect((await cli([], dir)).out).toContain("checkout,approved");
   });
 
+  it("OS and editor litter in the fakes and tests folders never makes an approval out of date", async () => {
+    const dir = await approvedProject();
+    mkdirSync(join(dir, "e2e/standins/.cache"), { recursive: true });
+    for (const file of ["e2e/standins/.DS_Store", "e2e/standins/.cache/x.mjs", "e2e/standins/pay.mjs~", "e2e/tests/.checkout.spec.ts.swp", "e2e/tests/helper.ts.swo"]) {
+      writeFileSync(join(dir, file), "litter\n");
+    }
+    expect((await cli([], dir)).out).toContain("checkout,approved");
+    writeFileSync(join(dir, "e2e/standins/pay.mjs"), "export default {};\n");
+    expect((await cli([], dir)).out).toContain('checkout,out-of-date,"changed since approval: fakes;');
+  });
+
   it("an approval from proofy 0.1, without config and compose fingerprints, reads as out of date", async () => {
     const dir = await approvedProject();
     const lock = join(dir, "e2e/proofy.lock.json");

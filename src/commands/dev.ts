@@ -76,6 +76,7 @@ function context(deps: Deps, project: Project, sourceInfo: RunContext["sourceInf
     log: deps.log,
     base: project.paths,
     source: project.paths,
+    sourceTop: project.top,
     config: project.config,
     approvals: project.approvals,
     cacheDir: project.cacheDir,

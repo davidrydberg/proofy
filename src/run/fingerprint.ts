@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import type { Config } from "../config.js";
 import type { Paths } from "../project.js";
 import { composeSources } from "../sandbox/sources.js";
@@ -64,13 +64,20 @@ async function composeHash(paths: Paths, config: Config): Promise<string> {
   return short(hash.digest("hex"));
 }
 
-/** Every file in a folder and its subfolders, relative to it and sorted. None when the folder is missing. */
+// Editor backup and swap files.
+const LITTER = /(~|\.swp|\.swo)$/;
+
+/**
+ * Every file in a folder and its subfolders, relative to it and sorted. None when the folder is missing. Hidden files
+ * and folders and editor backups are left out: OS and editor litter is never in another checkout.
+ */
 async function filesIn(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { recursive: true, withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
+      .filter((file) => !file.split(sep).some((part) => part.startsWith(".")) && !LITTER.test(file))
       .sort();
   } catch {
     return [];

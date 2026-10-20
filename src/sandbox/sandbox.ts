@@ -8,7 +8,7 @@ import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
 import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
-import { sandboxCompose, subnetFor, unsetUses, type Mode } from "./compose.js";
+import { sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
 import { tail, type Proc } from "./docker.js";
 import { composeSources } from "./sources.js";
 
@@ -17,6 +17,8 @@ export const PKG_DIR = fileURLToPath(new URL("../../", import.meta.url));
 export interface SandboxOptions {
   /** Where the app's compose files resolve: the repository, or an exported pull request. */
   sourceDir: string;
+  /** The repository's top folder sourceDir sits in: an image build may read host files only inside it. */
+  repoDir: string;
   /** The e2e folder the tests and fakes come from. */
   e2eDir: string;
   /** Where the sandbox's own logs land: the run folder, or e2e/out for a dev sandbox. */
@@ -153,9 +155,11 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
     ]);
   }
   const model = JSON.parse(normalized.stdout) as Record<string, unknown>;
-  if (unset.length > 0) await refuseUnset(proc, args, model, config, unset);
+  const raw = await proc("docker", [...args, "config", "--format", "json", "--no-interpolate"]);
+  if (raw.code !== 0) throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(raw.stderr, 8)]);
+  refuseVariables(unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset, DOCKER_ENV));
   const { subnet, standinIp } = subnetFor(options.project, attempt);
-  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), user: hostUser(), dirs });
+  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), repoDir: options.repoDir, user: hostUser(), dirs });
   const composeFile = join(workDir, "compose.yml");
   await writeFile(composeFile, stringify(generated.compose));
   const assets = Object.fromEntries(config.assets.map((url) => [assetKey(url), assetFile(url)]));
@@ -170,23 +174,23 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
   return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs };
 }
 
-// Compose's warning for a ${VAR} it replaced with an empty value.
+// Compose's warning for a ${VAR} it replaced with an empty value. Worded otherwise, it matches nothing and the value
+// stays blank.
 const UNSET = /The \\?"([A-Za-z_][A-Za-z0-9_]*)\\?" variable is not set/g;
 const NO_SHELL = "proofy never reads the shell's environment or a .env file, settings come only from e2e/proofy.json env and the compose files";
 
-/** Refuses a variable that would silently be empty where it reaches the app. */
-async function refuseUnset(proc: Proc, args: string[], model: Record<string, unknown>, config: Config, unset: string[]): Promise<void> {
-  const raw = await proc("docker", [...args, "config", "--format", "json", "--no-interpolate"]);
-  if (raw.code !== 0) throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(raw.stderr, 8)]);
-  const uses = unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset);
+/** Refuses a variable that would be silently empty, or come from the machine running proofy, where it reaches the app. */
+function refuseVariables(uses: UnsetUse[]): void {
   if (uses.length === 0) return;
   const where = uses.map((use) => `\${${use.name}}${use.path.length > 0 ? ` in ${use.path.join(".")}` : ""}`);
-  throw new CliError(`The compose files use variables that have no value in the sandbox: ${where.join(", ")}`, "CONFIG_INVALID", [
+  throw new CliError(`The compose files use variables that have no fixed value in the sandbox: ${where.join(", ")}`, "CONFIG_INVALID", [
     NO_SHELL,
     ...uses.map((use) =>
       use.path[0] === "services" && use.path[2] === "environment"
         ? `Set ${use.path[3]} for service ${use.path[1]} in e2e/proofy.json env`
-        : `Give ${use.name} a default in the compose file, such as \${${use.name}:-value}`,
+        : DOCKER_ENV.includes(use.name)
+          ? `Replace \${${use.name}} with a fixed value in the compose file: docker needs ${use.name}, so it comes from the machine running proofy, default or not`
+          : `Give ${use.name} a default in the compose file, such as \${${use.name}:-value}`,
     ),
   ]);
 }

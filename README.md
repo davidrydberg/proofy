@@ -9,7 +9,8 @@ The sandbox has no way out.
 Every outside call to a hostname goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused.
 The report lists every HTTP and HTTPS call, and every name the app looked up without calling it over HTTP; calls to a raw IP address reach nothing and are not listed.
 The app's settings come only from `e2e/proofy.json` and the compose files, never from your shell's environment or a `.env` file.
-proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, `build.ssh`, `build.secrets`, a volume with a `driver` or `driver_opts`, or a mount of the Docker or containerd socket, also as a secret or config file.
+proofy refuses a compose variable that would be blank where it reaches the app, and any use of a variable docker itself needs (`PATH`, `HOME`, `DOCKER_*`, `XDG_RUNTIME_DIR`), even with a default.
+proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, `build.ssh`, `build.secrets`, `build.privileged`, `build.entitlements`, a build context or `build.additional_contexts` folder outside the repository, a volume with `driver_opts` or a `driver` other than `local`, or a mount of the Docker or containerd socket, also as a secret or config file.
 
 ![How proofy works: you describe a test, your agent writes requirements, a test and fakes, you approve, every run is sealed in Docker, and the report shows evidence per requirement](docs/overview.gif)
 

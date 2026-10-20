@@ -13,6 +13,7 @@ function generate(model: Record<string, unknown>, config: Record<string, unknown
     standinIp: "10.210.1.53",
     standinImage: "proofy-standin:test",
     runnerImage: "playwright:test",
+    repoDir: "/repo",
     user: "501:20",
     dirs,
   });
@@ -95,19 +96,35 @@ describe("sandbox compose", () => {
       [{ volumes: [{ type: "bind", source: "/run/user/", target: "/xdg" }] }, /bind mount of \/run\/user/],
       [{ build: { context: ".", ssh: ["default"] } }, /sets build\.ssh/],
       [{ build: { context: ".", secrets: [{ source: "npm" }] } }, /sets build\.secrets/],
+      [{ build: { context: ".", privileged: true } }, /sets build\.privileged/],
+      [{ build: { context: ".", entitlements: ["network.host"] } }, /sets build\.entitlements/],
+      [{ build: { context: "/Users/me" } }, /sets build\.context \/Users\/me, which would give the image build host files outside the repository/],
+      [{ build: { context: "/repo/../etc" } }, /sets build\.context/],
+      [{ build: { context: "/repository" } }, /sets build\.context/],
+      [{ build: { context: "/repo", additional_contexts: { keys: "/Users/me/.ssh" } } }, /sets build\.additional_contexts\.keys \/Users\/me\/\.ssh/],
+      [{ build: { context: "/repo", additional_contexts: { layout: "oci-layout:///Users/me/layout@sha256:abc" } } }, /sets build\.additional_contexts\.layout/],
     ];
     for (const [settings, message] of refused) {
       expect(() => generate({ services: { web: { image: "x", ...settings } } }, { compose: ["c.yml"] }), JSON.stringify(settings)).toThrow(message);
     }
-    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", build: { context: ".", ssh: [], secrets: [] }, volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "volume", source: "data", target: "/data" }, { type: "bind", source: "/run/user/1000/app", target: "/app" }] };
+    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", build: { context: ".", ssh: [], secrets: [], privileged: false, entitlements: [] }, volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "volume", source: "data", target: "/data" }, { type: "bind", source: "/run/user/1000/app", target: "/app" }] };
     expect(() => generate({ services: { web: allowed, db: { image: "y" } }, volumes: { data: { name: "shop_data" } } }, { compose: ["c.yml"] })).not.toThrow();
+    const contexts = [
+      { context: "/repo" },
+      { context: "/repo/apps/shop", additional_contexts: { shared: "/repo/packages/shared", layout: "oci-layout:///repo/layouts/base@sha256:abc" } },
+      { context: "https://github.com/acme/shop.git#main", additional_contexts: { base: "docker-image://node:24", git: "git@github.com:acme/lib.git", other: "service:db" } },
+    ];
+    for (const build of contexts) {
+      expect(() => generate({ services: { web: { image: "x", build } } }, { compose: ["c.yml"] }), JSON.stringify(build)).not.toThrow();
+    }
   });
 
-  it("refuses a volume with a driver or driver options, which could mount a host folder or a network share", () => {
+  it("refuses a volume with driver options or a driver other than local, which could mount a host folder or a network share", () => {
     const web = { image: "x", volumes: [{ type: "volume", source: "share", target: "/share" }] };
-    for (const share of [{ driver_opts: { type: "nfs", o: "addr=10.0.0.1,rw", device: ":/export" } }, { driver_opts: { type: "none", o: "bind", device: "/var/run" } }, { driver: "local" }, { driver: "rclone" }]) {
+    for (const share of [{ driver_opts: { type: "nfs", o: "addr=10.0.0.1,rw", device: ":/export" } }, { driver: "local", driver_opts: { type: "none", o: "bind", device: "/var/run" } }, { driver: "rclone" }]) {
       expect(() => generate({ services: { web }, volumes: { share: { name: "shop_share", ...share } } }, { compose: ["c.yml"] }), JSON.stringify(share)).toThrow(/Volume share sets driver/);
     }
+    expect(generate({ services: { web }, volumes: { share: { name: "shop_share", driver: "local" } } }, { compose: ["c.yml"] }).compose.volumes).toEqual({ share: { name: "shop_share", driver: "local" } });
   });
 
   it("carries secrets and configs into the sandbox, refusing a socket and the environment proofy runs in", () => {
@@ -155,6 +172,27 @@ describe("sandbox compose", () => {
       { name: "STRIPE_KEY", path: ["services", "worker", "environment", "SECRET"] },
       { name: "MAIL_FROM", path: ["services", "web", "environment", "MAIL"] },
       { name: "NOWHERE", path: [] },
+    ]);
+  });
+
+  it("finds every use of a variable docker needs where it reaches the app, also with a default, since its value comes from the machine", () => {
+    const raw = {
+      services: {
+        web: {
+          image: "shop",
+          ports: ["${HOME}:80"],
+          environment: { DATA: "${HOME}/data", BIN: "$PATH", SOCK: "${DOCKER_HOST:-unix:///x}", LITERAL: "$$HOME", OVERRIDDEN: "${HOME}", OTHER: "${HOMEDIR}" },
+          volumes: ["${XDG_RUNTIME_DIR-/run}/app:/app"],
+        },
+      },
+    };
+    const model = { services: { web: {} } };
+    const config = configSchema.parse({ compose: ["c.yml"], env: { web: { OVERRIDDEN: "x" } } });
+    expect(unsetUses(raw, model, config, [], ["PATH", "HOME", "DOCKER_HOST", "XDG_RUNTIME_DIR", "DOCKER_CONFIG"])).toEqual([
+      { name: "PATH", path: ["services", "web", "environment", "BIN"] },
+      { name: "HOME", path: ["services", "web", "environment", "DATA"] },
+      { name: "DOCKER_HOST", path: ["services", "web", "environment", "SOCK"] },
+      { name: "XDG_RUNTIME_DIR", path: ["services", "web", "volumes", "0"] },
     ]);
   });
 

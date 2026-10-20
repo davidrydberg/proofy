@@ -23,6 +23,8 @@ export interface RunContext {
   base: Paths;
   /** Where the app, tests and fakes come from: the working copy, or an exported pull request. */
   source: Paths;
+  /** The repository's top folder the source sits in: the working copy's, or the exported pull request. */
+  sourceTop: string;
   config: Config;
   approvals: Approvals;
   cacheDir: string;
@@ -49,6 +51,7 @@ export function newRunId(now: Date): string {
 export function sandboxOptions(ctx: RunContext, mode: "run" | "dev", project: string, logDir: string): SandboxOptions {
   return {
     sourceDir: ctx.source.root,
+    repoDir: ctx.sourceTop,
     e2eDir: ctx.source.e2e,
     logDir,
     config: ctx.config,
