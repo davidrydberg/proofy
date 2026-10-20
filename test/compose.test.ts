@@ -77,6 +77,28 @@ describe("sandbox compose", () => {
     expect(() => generate(MODEL, { compose: ["c.yml"], exec: { cron: { service: "queue", command: ["x"] } } })).toThrow(/exec.cron/);
   });
 
+  it("refuses every service setting that would let a service out of the seal", () => {
+    const refused: Array<[Record<string, unknown>, RegExp]> = [
+      [{ privileged: true }, /sets privileged/],
+      [{ cap_add: ["NET_ADMIN"] }, /sets cap_add/],
+      [{ pid: "host" }, /sets pid: host/],
+      [{ ipc: "host" }, /sets ipc: host/],
+      [{ uts: "host" }, /sets uts: host/],
+      [{ userns_mode: "host" }, /sets userns_mode: host/],
+      [{ devices: [{ source: "/dev/net/tun", target: "/dev/net/tun", permissions: "rwm" }] }, /sets devices/],
+      [{ volumes: [{ type: "bind", source: "/var/run/docker.sock", target: "/var/run/docker.sock" }] }, /bind mount of \/var\/run\/docker\.sock/],
+      [{ volumes: [{ type: "bind", source: "/run/containerd/containerd.sock", target: "/c.sock" }] }, /bind mount of \/run\/containerd/],
+      [{ volumes: [{ type: "bind", source: "/Users/me/.docker/run/docker.sock", target: "/d.sock" }] }, /bind mount of/],
+      [{ volumes: [{ type: "bind", source: "/var/run", target: "/host-run" }] }, /bind mount of \/var\/run/],
+      [{ volumes: [{ type: "bind", source: "/", target: "/host" }] }, /bind mount of \//],
+    ];
+    for (const [settings, message] of refused) {
+      expect(() => generate({ services: { web: { image: "x", ...settings } } }, { compose: ["c.yml"] }), JSON.stringify(settings)).toThrow(message);
+    }
+    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "volume", source: "data", target: "/data" }] };
+    expect(() => generate({ services: { web: allowed, db: { image: "y" } } }, { compose: ["c.yml"] })).not.toThrow();
+  });
+
   it("picks a stable subnet per project and a different one per attempt", () => {
     expect(subnetFor("proofy-shop-run-1", 0)).toEqual(subnetFor("proofy-shop-run-1", 0));
     expect(subnetFor("proofy-shop-run-1", 0).subnet).not.toBe(subnetFor("proofy-shop-run-1", 1).subnet);

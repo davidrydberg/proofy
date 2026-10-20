@@ -6,7 +6,7 @@ import { CliError } from "../errors.js";
 import { exists, flowNames } from "../project.js";
 import { finishRun, logOffsets, planFlows, reserveRunId, sandboxOptions, testsInSandbox, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
-import { compose, forwardedPorts, installImages, prepare, saveLogs, start, stop, type Sandbox } from "../sandbox/sandbox.js";
+import { compose, forwardedPorts, installImages, prepare, resolveImages, saveLogs, start, stop, type Sandbox, type ServiceImage } from "../sandbox/sandbox.js";
 import { loadProject, projectName, workingTreeInfo, type Project } from "./context.js";
 import { runResult } from "./run.js";
 import type { CommandResult } from "./types.js";
@@ -27,6 +27,8 @@ examples:
 interface DevState extends Sandbox {
   startedAt: string;
   urls: { app?: string; mail?: string };
+  /** Missing in a state file written before proofy recorded images. */
+  images?: ServiceImage[];
 }
 
 export async function devCommand(args: string[], deps: Deps): Promise<CommandResult> {
@@ -89,15 +91,17 @@ async function devUp(deps: Deps, project: Project): Promise<CommandResult> {
   const ctx = context(deps, project, {});
   const options = sandboxOptions(ctx, "dev", projectName(project.root, "dev"), outDir(project.paths));
   let sandbox = await prepare(deps.proc, options);
+  let images: ServiceImage[];
   try {
     await installImages(deps.proc, options, sandbox);
+    images = await resolveImages(deps.proc, sandbox);
     sandbox = await start(deps.proc, options, sandbox);
   } catch (error) {
     await saveLogs(deps.proc, sandbox, outDir(project.paths));
     await stop(deps.proc, sandbox);
     throw error;
   }
-  const state: DevState = { ...sandbox, startedAt: deps.now().toISOString(), urls: await forwardedPorts(deps.proc, sandbox) };
+  const state: DevState = { ...sandbox, startedAt: deps.now().toISOString(), urls: await forwardedPorts(deps.proc, sandbox), images };
   await writeFile(stateFile(project), `${JSON.stringify(state, null, 2)}\n`);
   return upResult(state, false);
 }
@@ -155,7 +159,7 @@ async function devTest(deps: Deps, project: Project, names: string[], extra: str
   }
   const notes = extra.length > 0 ? [`Playwright arguments: ${extra.join(" ")}. A filtered run can leave requirements unchecked`] : [];
   const runDir = join(outDir(project.paths), id);
-  const report = await finishRun(ctx, { id, kind: "dev", startedAt, runDir, planned, notes, sandbox: state, offsets, ...(environmentError ? { environmentError } : {}) });
+  const report = await finishRun(ctx, { id, kind: "dev", startedAt, runDir, planned, notes, sandbox: state, offsets, ...(state.images ? { images: state.images } : {}), ...(environmentError ? { environmentError } : {}) });
   return runResult(report, runDir, project.root);
 }
 

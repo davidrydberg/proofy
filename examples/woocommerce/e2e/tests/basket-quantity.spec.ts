@@ -31,16 +31,14 @@ test("change the basket quantity", async ({ page }) => {
   claim({
     spec: "R1",
     did: "set the quantity to 3 and updated the basket",
-    expected: "1 coffee before; then 3 x COFFEE, 360.00 SEK stored and shown",
-    actual: `before ${one.items_count}; then ${three.items.map((item) => `${item.quantity} x ${item.sku}`).join(" + ")}, stored ${amount(three)} ${three.totals.currency_code}; shown "${shown}"`,
-    ok:
-      one.items_count === 1 &&
-      three.items.length === 1 &&
-      three.items[0]!.sku === "COFFEE" &&
-      three.items[0]!.quantity === 3 &&
-      amount(three) === 360 &&
-      three.totals.currency_code === "SEK" &&
-      shown.replace(/[^\d.]/g, "") === "360.00",
+    expected: { before: 1, items: [{ sku: "COFFEE", quantity: 3 }], stored: 360, currency: "SEK", shown: "360.00" },
+    actual: {
+      before: one.items_count,
+      items: three.items.map(({ sku, quantity }) => ({ sku, quantity })),
+      stored: amount(three),
+      currency: three.totals.currency_code,
+      shown: shown.replace(/[^\d.]/g, ""),
+    },
     evidence: three.totals,
   });
 
@@ -52,8 +50,7 @@ test("change the basket quantity", async ({ page }) => {
   claim({
     spec: "R2",
     did: "set the quantity to 0 and updated the basket",
-    expected: "0 items stored, the empty-basket notice shown, no item rows",
-    actual: `${empty.items_count} items stored, notice ${emptyShown ? "shown" : "missing"}, ${rows} item rows`,
-    ok: empty.items_count === 0 && emptyShown && rows === 0,
+    expected: { itemsStored: 0, emptyNotice: "shown", itemRows: 0 },
+    actual: { itemsStored: empty.items_count, emptyNotice: emptyShown ? "shown" : "missing", itemRows: rows },
   });
 });

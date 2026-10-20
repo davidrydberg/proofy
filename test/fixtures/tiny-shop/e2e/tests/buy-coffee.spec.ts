@@ -11,14 +11,14 @@ test("buy coffee", async ({ page }) => {
   claim({ spec: "R1", did: "bought one coffee", expected: "an order number", actual: id, ok: /^\d+$/.test(id) });
 
   const order = JSON.parse(await exec("order", [`http://localhost:3000/api/orders/${id}`])) as { status: string; total: number };
-  claim({ spec: "R2", did: `read order ${id}`, expected: "paid, 120", actual: `${order.status}, ${order.total}`, ok: order.status === "paid" && order.total === 120, evidence: order });
+  claim({ spec: "R2", did: `read order ${id}`, expected: { status: "paid", total: 120 }, actual: { status: order.status, total: order.total }, evidence: order });
 
   const payments = await standin.requests("api.payments.test", { atLeast: 1 });
   const sent = payments.map((request) => JSON.parse(request.body) as { amount: number; currency: string });
   claim({ spec: "R3", did: "read the requests the provider received", expected: "one charge of 12000 SEK", actual: sent, ok: sent.some((p) => p.amount === 12000 && p.currency === "SEK") });
 
   const messages = await mail.for(email);
-  claim({ spec: "R4", did: `read ${email}'s mail`, expected: "one email with the order number", actual: `${messages.length} emails`, ok: messages.length === 1 && messages[0]!.text.includes(id) });
+  claim({ spec: "R4", did: `read ${email}'s mail`, expected: { emails: 1, withOrder: 1 }, actual: { emails: messages.length, withOrder: messages.filter((m) => m.text.includes(id)).length } });
 
   notCovered("R5", "the provider's own page cannot load in the sealed sandbox");
 });

@@ -35,6 +35,18 @@ export interface Sandbox {
   composeFile: string;
   workDir: string;
   notes: string[];
+  /** The image reference each sealed compose service runs, by service name. */
+  imageRefs: Record<string, string>;
+}
+
+/** The image a service ran, as resolved on this machine. */
+export interface ServiceImage {
+  service: string;
+  image: string;
+  /** The local image ID, for pulled and built images alike. */
+  id?: string;
+  /** The registry digest of a pulled image. */
+  digest?: string;
 }
 
 export function cacheDirFor(env: NodeJS.ProcessEnv, root: string): string {
@@ -128,7 +140,33 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
     join(dirs.runSetup, "standin.json"),
     JSON.stringify({ hosts: config.hosts, assets, address: standinIp, standinsDir: `${MOUNT.e2e}/standins`, assetsDir: `${MOUNT.runSetup}/assets` }),
   );
-  return { project: options.project, composeFile, workDir, notes: generated.notes };
+  // Compose names a built image without an image key <project>-<service>.
+  const imageRefs = Object.fromEntries(
+    Object.entries(generated.compose.services as Record<string, { image?: string }>).map(([name, service]) => [name, service.image ?? `${options.project}-${name}`]),
+  );
+  return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs };
+}
+
+/**
+ * What every service's image resolves to after the install phase. Images are pulled only when missing, so a
+ * floating tag can mean a different image on another day or machine; the report records which one ran.
+ */
+export async function resolveImages(proc: Proc, sandbox: Sandbox): Promise<ServiceImage[]> {
+  const images: ServiceImage[] = [];
+  for (const [service, image] of Object.entries(sandbox.imageRefs)) {
+    const inspect = await proc("docker", ["image", "inspect", "--format", "{{json .}}", image]);
+    let found: { Id?: string; RepoDigests?: string[] } = {};
+    try {
+      if (inspect.code === 0) found = JSON.parse(inspect.stdout) as typeof found;
+    } catch {
+      // Recorded without an ID: the report shows the image was not found.
+    }
+    const repo = image.replace(/@.*$/, "").replace(/:[^/:]*$/, "");
+    const digests = found.RepoDigests ?? [];
+    const digest = digests.find((entry) => entry.startsWith(`${repo}@`)) ?? digests[0];
+    images.push({ service, image, ...(found.Id ? { id: found.Id } : {}), ...(digest ? { digest } : {}) });
+  }
+  return images;
 }
 
 /** Sealed phase: starts the app with no way out, waits for it, seeds the empty database. */
@@ -222,22 +260,42 @@ function startExecBridge(proc: Proc, options: SandboxOptions, sandbox: Sandbox):
   const dir = join(sandbox.workDir, "runner", "exec");
   let running = true;
   const busy = new Set<string>();
+  const answer = async (file: string): Promise<Record<string, unknown>> => {
+    let raw: string;
+    try {
+      raw = await readFile(join(dir, file), "utf8");
+    } finally {
+      await rm(join(dir, file), { force: true });
+    }
+    const { name, args } = JSON.parse(raw) as { name?: unknown; args?: unknown };
+    if (typeof name !== "string" || !Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
+      return { error: "exec() sent a request without a command name and string arguments" };
+    }
+    const named = options.config.exec[name];
+    if (!named) {
+      return { error: `exec("${name}") is not in e2e/proofy.json exec. Named commands: ${Object.keys(options.config.exec).join(", ") || "none"}` };
+    }
+    const result = await proc("docker", [...compose(sandbox), "exec", "-T", named.service, ...named.command, ...args], {
+      timeoutMs: options.config.limits.testMinutes * 60_000,
+    });
+    return { code: result.code, stdout: result.stdout, stderr: result.stderr };
+  };
+  // Never throws: a request that cannot be answered gets an error response, so the test fails with the reason
+  // and the run goes on.
   const handle = async (file: string) => {
     const id = file.slice(0, -".req.json".length);
-    const request = JSON.parse(await readFile(join(dir, file), "utf8")) as { name: string; args: string[] };
-    await rm(join(dir, file), { force: true });
-    const named = options.config.exec[request.name];
     let response: Record<string, unknown>;
-    if (!named) {
-      response = { error: `exec("${request.name}") is not in e2e/proofy.json exec. Named commands: ${Object.keys(options.config.exec).join(", ") || "none"}` };
-    } else {
-      const result = await proc("docker", [...compose(sandbox), "exec", "-T", named.service, ...named.command, ...request.args], {
-        timeoutMs: options.config.limits.testMinutes * 60_000,
-      });
-      response = { code: result.code, stdout: result.stdout, stderr: result.stderr };
+    try {
+      response = await answer(file);
+    } catch (error) {
+      response = { error: `The host could not answer exec(): ${error instanceof Error ? error.message : String(error)}` };
     }
-    await writeFile(join(dir, `${id}.tmp`), JSON.stringify(response));
-    await rename(join(dir, `${id}.tmp`), join(dir, `${id}.res.json`));
+    try {
+      await writeFile(join(dir, `${id}.tmp`), JSON.stringify(response));
+      await rename(join(dir, `${id}.tmp`), join(dir, `${id}.res.json`));
+    } catch {
+      // The test gives up waiting and says exec() got no answer.
+    }
   };
   const loop = (async () => {
     while (running) {
