@@ -33,7 +33,7 @@ Whatever you did not say, it picks and lists under `## Assumed` in the spec, so 
 
 ```sh
 proofy                            # setup, every flow's state and the next step; safe for a session-start hook
-proofy approve guest-checkout     # you, after reading the requirements and the agent's notes
+proofy approve guest-checkout     # you: shows results, the agent's assumptions and gaps, then asks you to type the name
 proofy run --all                  # every approved flow in a fresh sealed sandbox
 proofy run --all --pr 42 --post   # a pull request's code, report posted on the PR
 ```

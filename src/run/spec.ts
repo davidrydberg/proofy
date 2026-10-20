@@ -17,3 +17,19 @@ export function parseRequirements(markdown: string): Requirement[] {
   }
   return out;
 }
+
+/** The list items under a `## <heading>` section of a spec file, such as "Assumed" or "Not covered". */
+export function specSection(markdown: string, heading: string): string[] {
+  const out: string[] = [];
+  let inside = false;
+  for (const line of markdown.split(/\r?\n/)) {
+    const title = /^##\s+(.+?)\s*$/.exec(line);
+    if (title) {
+      inside = title[1]?.toLowerCase() === heading.toLowerCase();
+      continue;
+    }
+    const item = inside ? /^\s*[-*]\s+(.+?)\s*$/.exec(line) : null;
+    if (item?.[1]) out.push(item[1]);
+  }
+  return out;
+}

@@ -3,7 +3,7 @@ import { runResult } from "../src/commands/run.js";
 import { proven } from "../src/run/history.js";
 import { renderMarkdown, verdict } from "../src/run/report.js";
 import { flowResult, type FlowResult, type PlannedFlow, type RunReport } from "../src/run/results.js";
-import { parseRequirements } from "../src/run/spec.js";
+import { parseRequirements, specSection } from "../src/run/spec.js";
 import { sameJson, showValue } from "../src/test/compare.js";
 import type { Entry } from "../src/sandbox/contract.js";
 
@@ -117,5 +117,14 @@ describe("results", () => {
     const withImages = renderMarkdown({ ...report, images: [{ service: "web", image: "shop", id: "sha256:aaa" }, { service: "db", image: "mariadb:11", id: "sha256:bbb", digest: "mariadb@sha256:ccc" }] }, (path) => path);
     expect(withImages).toContain("| web | shop | sha256:aaa | none |");
     expect(withImages).toContain("| db | mariadb:11 | sha256:bbb | mariadb@sha256:ccc |");
+  });
+});
+
+describe("specSection", () => {
+  it("returns the list items under one heading only", () => {
+    const md = "## Requirements\n\n- R1. Shown.\n\n## Assumed\n\nIntro line.\n\n- One.\n* Two.\n\n## Not covered\n\n- Cards.\n";
+    expect(specSection(md, "Assumed")).toEqual(["One.", "Two."]);
+    expect(specSection(md, "not covered")).toEqual(["Cards."]);
+    expect(specSection(md, "Missing")).toEqual([]);
   });
 });
