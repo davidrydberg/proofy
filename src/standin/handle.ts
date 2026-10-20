@@ -66,9 +66,8 @@ const CONTENT_TYPES: Record<string, string> = {
   ttf: "font/ttf",
 };
 
-// Node caches every module it imports for the life of the process. A fake is imported with the generation in its URL,
-// so a reset loads the fake as it is now; this hook passes the generation on to every file in the standins folder that
-// the fake imports, such as a shared helper or a JSON file.
+// Node caches imports forever. We bust the cache with a generation query param, and this hook passes it on to whatever
+// the fake imports from standins/ (helpers, JSON), so a reset reloads all of it.
 const GENERATION = "proofy-generation";
 
 /** Makes every file a fake imports from the standins folder load fresh after a reset. Process-wide; once, in the container. */
@@ -204,7 +203,7 @@ export function adminResponse(admin: Admin, method: string, url: string, authori
   return { status: 404, json: { error: "unknown admin path" } };
 }
 
-export function refusal(host: string): StandinResponse {
+function refusal(host: string): StandinResponse {
   return {
     status: 502,
     json: { error: { code: "proofy_refused", message: `${host} is not allowed in the sealed sandbox. List it in e2e/proofy.json hosts as fake or record` } },

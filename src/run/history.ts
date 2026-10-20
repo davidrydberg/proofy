@@ -6,7 +6,9 @@ import type { Approvals } from "./approvals.js";
 import { changedParts, fingerprint, sameFingerprint, type Fingerprint } from "./fingerprint.js";
 import { outcome, type FlowResult, type RunReport } from "./results.js";
 
-export const KEEP_RUNS = 20;
+const KEEP_RUNS = 20;
+/** Runs with the current files and identical results that a flow needs before it can be approved. */
+export const REQUIRED_RUNS = 3;
 const RUN_ID = /^\d{8}-\d{6}(-\d+)?$/;
 
 export type FlowState = "draft" | "unproven" | "unstable" | "ready" | "approved" | "out-of-date";
@@ -14,9 +16,11 @@ export type FlowState = "draft" | "unproven" | "unstable" | "ready" | "approved"
 export interface FlowStatus {
   name: string;
   state: FlowState;
-  /** Runs with the current files, newest first, up to three. */
+  /** Runs with the current files, newest first, up to REQUIRED_RUNS. */
   runs: string[];
-  /** Why a flow with three runs is still not ready, such as a requirement no test checks. */
+  /** Whether the person can approve it now: proven with the current files, and not approved already. */
+  approvable: boolean;
+  /** Why a flow is still not ready, such as a requirement no test checks. */
   reason?: string;
   /** What changed since an out-of-date flow was approved, such as "test" or "e2e/proofy.json". */
   changed?: string[];
@@ -62,7 +66,7 @@ export async function flowStatuses(paths: Paths, config: Config, names: string[]
   for (const name of names) {
     const current = await fingerprint(paths, config, name);
     if (!(await exists(join(paths.tests, `${name}.spec.ts`)))) {
-      out.push({ name, state: "draft", runs: [], fingerprint: current });
+      out.push({ name, state: "draft", runs: [], approvable: false, fingerprint: current });
       continue;
     }
     const approval = approvals.flows[name];
@@ -71,25 +75,25 @@ export async function flowStatuses(paths: Paths, config: Config, names: string[]
       if (report.environmentError) continue;
       const flow = report.flows.find((candidate) => candidate.name === name);
       if (flow && sameFingerprint(flow.fingerprint, current)) matching.push({ id: report.id, flow });
-      if (matching.length === 3) break;
+      if (matching.length === REQUIRED_RUNS) break;
     }
     const runs = matching.map((match) => match.id);
     if (approval && sameFingerprint(approval, current)) {
-      out.push({ name, state: "approved", runs, fingerprint: current });
+      out.push({ name, state: "approved", runs, approvable: false, fingerprint: current });
       continue;
     }
     const proof = proven(matching.map((match) => match.flow));
     const state: FlowState = approval ? "out-of-date" : proof.ok ? "ready" : proof.unstable ? "unstable" : "unproven";
-    out.push({ name, state, runs, fingerprint: current, ...(proof.reason ? { reason: proof.reason } : {}), ...(approval ? { changed: changedParts(approval, current) } : {}) });
+    out.push({ name, state, runs, approvable: proof.ok, fingerprint: current, ...(proof.reason ? { reason: proof.reason } : {}), ...(approval ? { changed: changedParts(approval, current) } : {}) });
   }
   return out;
 }
 
-/** Three runs with the current files and identical results per requirement, every requirement checked. */
+/** REQUIRED_RUNS runs with the current files and identical results per requirement, every requirement checked. */
 export function proven(flows: FlowResult[]): { ok: boolean; unstable: boolean; reason?: string } {
-  if (flows.length < 3) return { ok: false, unstable: false, reason: `${flows.length} of 3 runs with the current files` };
+  if (flows.length < REQUIRED_RUNS) return { ok: false, unstable: false, reason: `${flows.length} of ${REQUIRED_RUNS} runs with the current files` };
   const outcomes = new Set(flows.map(outcome));
-  if (outcomes.size > 1) return { ok: false, unstable: true, reason: "the last 3 runs gave different results" };
+  if (outcomes.size > 1) return { ok: false, unstable: true, reason: `the last ${REQUIRED_RUNS} runs gave different results` };
   const latest = flows[0];
   const unchecked = latest?.requirements.filter((requirement) => requirement.result === "not-checked").map((requirement) => requirement.id) ?? [];
   if (unchecked.length > 0) return { ok: false, unstable: false, reason: `no claim checks ${unchecked.join(", ")}` };

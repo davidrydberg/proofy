@@ -51,7 +51,7 @@ export function padVisible(text: string, width: number, align: "left" | "right" 
   return align === "left" ? text + pad : pad + text;
 }
 
-const ANSI = new RegExp(`${String.fromCharCode(27)}\\[\\d+m`, "g");
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");

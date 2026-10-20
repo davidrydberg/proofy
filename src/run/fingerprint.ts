@@ -45,7 +45,7 @@ async function testHash(paths: Paths, flow: string): Promise<string> {
   return hashFiles(paths.tests, files);
 }
 
-export async function fakesHash(paths: Paths, config: Config): Promise<string> {
+async function fakesHash(paths: Paths, config: Config): Promise<string> {
   return hashFiles(paths.standins, await filesIn(paths.standins), JSON.stringify(Object.entries(config.hosts).sort()));
 }
 

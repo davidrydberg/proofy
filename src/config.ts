@@ -45,7 +45,7 @@ export const configSchema = z
 
 export type Config = z.infer<typeof configSchema>;
 
-export function parseConfig(raw: string, file: string): Config {
+function parseConfig(raw: string, file: string): Config {
   let json: unknown;
   try {
     json = JSON.parse(raw);

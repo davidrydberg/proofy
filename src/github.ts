@@ -79,7 +79,7 @@ export async function changedApprovals(proc: Proc, root: string, pr: PullRequest
 
 async function approvalsAt(proc: Proc, root: string, commit: string, lockFile: string): Promise<Record<string, unknown>> {
   const shown = await proc("git", ["-C", root, "show", `${commit}:${lockFile}`]);
-  // No approvals file at that commit. One that is not valid JSON counts as no approvals, so every approval it replaced shows as changed.
+  // No lockfile at that commit, or broken JSON: treat it as empty.
   if (shown.code !== 0) return {};
   try {
     return (JSON.parse(shown.stdout) as { flows?: Record<string, unknown> }).flows ?? {};

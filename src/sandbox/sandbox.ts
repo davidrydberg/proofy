@@ -7,17 +7,18 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
-import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
-import { hostPaths, PROXY_VARIABLES, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
+import { ADMIN_PORT, FORWARD, FORWARD_PORTS, MOUNT, RUNNER, STANDIN } from "./contract.js";
+import { PROXY_VARIABLES, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
+import { hostPaths } from "./policy.js";
 import { tail, type Proc } from "./docker.js";
 import { composeSources } from "./sources.js";
 
-export const PKG_DIR = fileURLToPath(new URL("../../", import.meta.url));
+const PKG_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
 export interface SandboxOptions {
   /** Where the app's compose files resolve: the repository, or an exported pull request. */
   sourceDir: string;
-  /** The repository's top folder sourceDir sits in: an image build may read host files only inside it. */
+  /** Repo root that sourceDir is in. Builds can't read host files outside it. */
   repoDir: string;
   /** The e2e folder the tests and fakes come from. */
   e2eDir: string;
@@ -39,10 +40,7 @@ export interface Sandbox {
   notes: string[];
   /** The image reference each sealed compose service runs, by service name. */
   imageRefs: Record<string, string>;
-  /**
-   * The fake-service container's admin token and Mailpit's password, new for every sandbox. App services never see it,
-   * and it is kept only in the sandbox's own folder, outside the repository: sandboxToken reads it back.
-   */
+  /** Per-sandbox secret for the standin admin port and Mailpit. App services never get it, and it lives outside the repo. */
   token: string;
 }
 
@@ -56,9 +54,8 @@ export interface ServiceImage {
   digest?: string;
 }
 
-// What docker needs to reach the daemon, its own settings, the proxy and the image builder, plus every BUILDX_ variable.
-// Compose interpolates ${VAR} in the app's compose files from its environment, so anything more would let the shell
-// running proofy reach the app.
+// The env we pass to docker (plus BUILDX_*). Compose interpolates ${VAR} from it, so anything else would leak the
+// shell into the app.
 const DOCKER_ENV = [
   "PATH",
   "HOME",
@@ -87,16 +84,16 @@ export function cacheDirFor(env: NodeJS.ProcessEnv, root: string): string {
   return join(base, "proofy", createHash("sha256").update(root).digest("hex").slice(0, 12));
 }
 
-export function playwrightVersion(): string {
+function playwrightVersion(): string {
   const require = createRequire(import.meta.url);
   return (require("@playwright/test/package.json") as { version: string }).version;
 }
 
-export function runnerImage(): string {
+function runnerImage(): string {
   return `mcr.microsoft.com/playwright:v${playwrightVersion()}-noble`;
 }
 
-export function standinImage(): string {
+function standinImage(): string {
   const pkg = createRequire(import.meta.url)(join(PKG_DIR, "package.json")) as { version: string };
   return `proofy-standin:${pkg.version}`;
 }
@@ -349,17 +346,17 @@ export async function stop(proc: Proc, sandbox: Pick<Sandbox, "project" | "compo
 }
 
 export async function forwardedPorts(proc: Proc, sandbox: Sandbox): Promise<{ app?: string; mail?: string }> {
-  const port = async (inner: string) => {
-    const result = await proc("docker", [...compose(sandbox), "port", "proofy-forward", inner]);
+  const port = async (inner: number) => {
+    const result = await proc("docker", [...compose(sandbox), "port", FORWARD, String(inner)]);
     const match = /:(\d+)\s*$/.exec(result.stdout.trim());
     return match ? `http://127.0.0.1:${match[1]}` : undefined;
   };
-  const app = await port("8080");
-  const mail = await port("8025");
+  const app = await port(FORWARD_PORTS.app);
+  const mail = await port(FORWARD_PORTS.mail);
   return { ...(app ? { app } : {}), ...(mail ? { mail } : {}) };
 }
 
-export function hostUser(): string {
+function hostUser(): string {
   return `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`;
 }
 
@@ -397,8 +394,7 @@ function startExecBridge(proc: Proc, options: SandboxOptions, sandbox: Sandbox):
     });
     return { code: result.code, stdout: result.stdout, stderr: result.stderr };
   };
-  // Never throws: a request that cannot be answered gets an error response, so the test fails with the reason
-  // and the run goes on.
+  // Don't throw. Reply with an error so the test fails with a reason and the run goes on.
   const handle = async (file: string) => {
     const id = file.slice(0, -".req.json".length);
     let response: Record<string, unknown>;

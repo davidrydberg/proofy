@@ -5,7 +5,7 @@ import { renderMarkdown, verdict } from "../src/run/report.js";
 import { flowResult, type FlowResult, type PlannedFlow, type RunReport } from "../src/run/results.js";
 import { parseRequirements } from "../src/run/spec.js";
 import { sameJson, showValue } from "../src/test/compare.js";
-import type { Entry } from "../src/test/index.js";
+import type { Entry } from "../src/sandbox/contract.js";
 
 const plan: PlannedFlow = {
   name: "checkout",

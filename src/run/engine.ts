@@ -23,7 +23,7 @@ export interface RunContext {
   base: Paths;
   /** Where the app, tests and fakes come from: the working copy, or an exported pull request. */
   source: Paths;
-  /** The repository's top folder the source sits in: the working copy's, or the exported pull request. */
+  /** Repo root of the source: the working copy, or the exported pull request. */
   sourceTop: string;
   config: Config;
   approvals: Approvals;
@@ -43,7 +43,7 @@ export async function planFlows(ctx: Pick<RunContext, "source" | "config" | "app
   return planned;
 }
 
-export function newRunId(now: Date): string {
+function newRunId(now: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }

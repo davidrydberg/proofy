@@ -1,3 +1,4 @@
+import { REQUIREMENTS_NOT_MET } from "./sandbox/contract.js";
 import type { Verdict } from "./run/report.js";
 import type { RequirementOutcome, RunReport } from "./run/results.js";
 import { GLYPH, padVisible, painter, stripAnsi, truncate, type Painter, type Style } from "./style.js";
@@ -93,7 +94,7 @@ export function renderRun(report: RunReport, result: Verdict, reportPath: string
       lines.push(`  ${outcomeMark(requirement.result, p)} ${padVisible(requirement.id, 4)} ${truncateVisible(detail, style.width - 9)}`);
     }
   }
-  const broken = report.flows.flatMap((flow) => flow.tests.filter((test) => test.status !== "passed" && test.error && !/Requirements not met/.test(test.error)).map((test) => ({ flow: flow.name, test })));
+  const broken = report.flows.flatMap((flow) => flow.tests.filter((test) => test.status !== "passed" && test.error && !test.error.includes(REQUIREMENTS_NOT_MET)).map((test) => ({ flow: flow.name, test })));
   if (broken.length > 0) {
     lines.push("", p.bold("TEST ERRORS"));
     for (const { flow, test } of broken) {
