@@ -16,6 +16,8 @@ export interface ComposeInputs {
   runnerImage: string;
   /** The repository's top folder the compose files come from: an image build may read host files only inside it. */
   repoDir: string;
+  /** The real path, symlinks resolved, of repoDir and of every existing path localContexts returns. A path missing here is compared as written. */
+  realPaths: Record<string, string>;
   /** "uid:gid" of the person running proofy, so files written into mounted folders stay theirs on Linux. */
   user: string;
   dirs: { pkg: string; ca: string; runSetup: string; out: string; e2e: string; work: string; nodeModules: string };
@@ -90,7 +92,7 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
       throw new CliError(`The compose service name "${name}" is reserved by proofy`, "CONFIG_INVALID", ["Rename the service in your compose file"]);
     }
     const service: Service = { ...original };
-    const breach = sealBreach(service, inputs.repoDir);
+    const breach = sealBreach(service, inputs.repoDir, inputs.realPaths);
     if (breach) {
       throw new CliError(`Service ${name} sets ${breach.setting}, which would ${breach.why}`, "CONFIG_INVALID", [
         `Remove ${breach.setting} from the compose file proofy uses`,
@@ -242,7 +244,7 @@ const SOCKET_NAME = /(^|\/)(docker|containerd|podman)\.sock$/;
 const ROOTLESS = /^(\/var)?\/run\/user(\/\d+)?$/;
 
 /** The first service setting that would let the service out of the sealed sandbox. */
-function sealBreach(service: Service, repoDir: string): { setting: string; why: string } | undefined {
+function sealBreach(service: Service, repoDir: string, realPaths: Record<string, string>): { setting: string; why: string } | undefined {
   if (service.network_mode !== undefined) return { setting: "network_mode", why: "bypass the sealed network" };
   if (service.privileged === true) return { setting: "privileged", why: "give it the host's devices and network controls" };
   if (Array.isArray(service.cap_add) && service.cap_add.length > 0) return { setting: "cap_add", why: "give it powers beyond the sandbox's" };
@@ -251,18 +253,14 @@ function sealBreach(service: Service, repoDir: string): { setting: string; why: 
   }
   if (Array.isArray(service.devices) && service.devices.length > 0) return { setting: "devices", why: "give it the host's devices" };
   // The image build has internet, so a pull request's Dockerfile could use these to act as the person running proofy.
-  const build = (service.build ?? {}) as { context?: unknown; additional_contexts?: unknown; ssh?: unknown; secrets?: unknown; privileged?: unknown; entitlements?: unknown };
+  const build = (service.build ?? {}) as { ssh?: unknown; secrets?: unknown; privileged?: unknown; entitlements?: unknown };
   if (Array.isArray(build.ssh) && build.ssh.length > 0) return { setting: "build.ssh", why: "give the image build the SSH agent of the person running proofy" };
   if (Array.isArray(build.secrets) && build.secrets.length > 0) return { setting: "build.secrets", why: "give the image build secrets from the host" };
   if (build.privileged === true) return { setting: "build.privileged", why: "give the image build the host's devices and network controls" };
   if (Array.isArray(build.entitlements) && build.entitlements.length > 0) return { setting: "build.entitlements", why: "give the image build powers beyond the sandbox's" };
-  const contexts: Array<[string, unknown]> = [
-    ["build.context", build.context],
-    ...Object.entries((build.additional_contexts ?? {}) as Record<string, unknown>).map(([name, value]): [string, unknown] => [`build.additional_contexts.${name}`, value]),
-  ];
-  for (const [setting, value] of contexts) {
-    const path = typeof value === "string" ? hostPath(value, repoDir) : undefined;
-    if (path !== undefined && !inside(repoDir, path)) return { setting: `${setting} ${value as string}`, why: "give the image build host files outside the repository" };
+  for (const { setting, value, path } of contextsOf(service, repoDir)) {
+    const real = realPaths[path];
+    if (!(real === undefined ? inside(repoDir, path) : inside(realPaths[repoDir] ?? repoDir, real))) return { setting: `${setting} ${value}`, why: "give the image build host files outside the repository" };
   }
   for (const volume of (service.volumes ?? []) as unknown[]) {
     if (!volume || typeof volume !== "object") continue;
@@ -270,6 +268,23 @@ function sealBreach(service: Service, repoDir: string): { setting: string; why: 
     if (type === "bind" && typeof source === "string" && exposesSocket(source)) return { setting: `a bind mount of ${source}`, why: "let it control Docker on the host" };
   }
   return undefined;
+}
+
+/** The host folder of every local build context in the model: what prepare resolves symlinks of before sealBreach compares them. */
+export function localContexts(model: Record<string, unknown>, repoDir: string): string[] {
+  return Object.values((model.services ?? {}) as Record<string, Service>).flatMap((service) => contextsOf(service, repoDir).map(({ path }) => path));
+}
+
+function contextsOf(service: Service, repoDir: string): Array<{ setting: string; value: string; path: string }> {
+  const build = (service.build ?? {}) as { context?: unknown; additional_contexts?: unknown };
+  const contexts: Array<[string, unknown]> = [
+    ["build.context", build.context],
+    ...Object.entries((build.additional_contexts ?? {}) as Record<string, unknown>).map(([name, value]): [string, unknown] => [`build.additional_contexts.${name}`, value]),
+  ];
+  return contexts.flatMap(([setting, value]) => {
+    const path = typeof value === "string" ? hostPath(value, repoDir) : undefined;
+    return path === undefined ? [] : [{ setting, value: value as string, path }];
+  });
 }
 
 // A context with a scheme, such as https://, docker-image:// or service:, or a git@ address is not a host folder.

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
 import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
-import { sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
+import { localContexts, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
 import { tail, type Proc } from "./docker.js";
 import { composeSources } from "./sources.js";
 
@@ -158,8 +158,13 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
   const raw = await proc("docker", [...args, "config", "--format", "json", "--no-interpolate"]);
   if (raw.code !== 0) throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(raw.stderr, 8)]);
   refuseVariables(unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset, DOCKER_ENV));
+  // A symlinked build context is read where it points, so the seal compares real paths.
+  const realPaths: Record<string, string> = {};
+  for (const path of [options.repoDir, ...localContexts(model, options.repoDir)]) {
+    await realpath(path).then((real) => (realPaths[path] = real), () => undefined);
+  }
   const { subnet, standinIp } = subnetFor(options.project, attempt);
-  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), repoDir: options.repoDir, user: hostUser(), dirs });
+  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), repoDir: options.repoDir, realPaths, user: hostUser(), dirs });
   const composeFile = join(workDir, "compose.yml");
   await writeFile(composeFile, stringify(generated.compose));
   const assets = Object.fromEntries(config.assets.map((url) => [assetKey(url), assetFile(url)]));

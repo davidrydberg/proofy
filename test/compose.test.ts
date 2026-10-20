@@ -14,6 +14,7 @@ function generate(model: Record<string, unknown>, config: Record<string, unknown
     standinImage: "proofy-standin:test",
     runnerImage: "playwright:test",
     repoDir: "/repo",
+    realPaths: {},
     user: "501:20",
     dirs,
   });
