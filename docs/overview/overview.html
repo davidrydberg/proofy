@@ -1,0 +1,182 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>proofy overview</title>
+<style>
+  :root {
+    --bg: #0b0b0c; --term: #181818; --bar: #252526; --text: #e8e8e8; --dim: #8a8a8a;
+    --claude: #d77757; --green: #4eba65; --red: #ff6b80; --yellow: #e5c07b; --blue: #7aa7f7; --bash: #fd5db1;
+    --mono: "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 960px; height: 540px; overflow: hidden; background: radial-gradient(circle at 50% 0%, #2a1d17, var(--bg) 70%);
+    color: var(--text); font: 15px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  #stage { position: relative; width: 960px; height: 540px; }
+
+  #win { position: absolute; left: 20px; top: 16px; width: 920px; height: 508px; background: var(--term);
+    border: 1px solid #333; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.55);
+    display: flex; flex-direction: column; }
+  #bar { height: 30px; background: var(--bar); display: flex; align-items: center; padding: 0 12px; position: relative; flex: none; }
+  #bar i { width: 12px; height: 12px; border-radius: 6px; margin-right: 8px; }
+  #bar span { position: absolute; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--dim); }
+
+  #body { flex: 1; display: flex; flex-direction: column; padding: 10px 16px 8px; font: 13px/20px var(--mono); min-height: 0; }
+  #hist { flex: 1; overflow: hidden; position: relative; min-height: 0; }
+  #inner { position: absolute; left: 0; right: 0; top: 0; }
+  .l { white-space: pre; min-height: 20px; }
+  .welcome { border: 1px solid var(--claude); border-radius: 6px; padding: 6px 12px; width: 470px; margin-bottom: 10px; }
+  .user { color: var(--dim); background: #232323; margin: 6px 0; }
+  .bang { color: var(--bash); background: #232323; margin: 6px 0; }
+  .gap { margin-top: 8px; }
+  .dim { color: var(--dim); } .g { color: var(--green); } .r { color: var(--red); } .y { color: var(--yellow); }
+  .c { color: var(--claude); } .bl { color: var(--blue); } .bold { font-weight: 700; }
+
+  #input { flex: none; margin-top: 6px; }
+  #box { border: 1px solid #555; border-radius: 6px; padding: 6px 10px; white-space: pre; }
+  #box.bash { border-color: var(--bash); }
+  #box.bash #prefix { color: var(--bash); }
+  #cursor { display: inline-block; width: 8px; height: 16px; background: var(--text); vertical-align: -3px; }
+  #hint { color: var(--dim); font-size: 12px; padding: 3px 10px 0; display: flex; justify-content: space-between; }
+
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="win">
+    <div id="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>~/shop - claude</span></div>
+    <div id="body">
+      <div id="hist"><div id="inner"></div></div>
+      <div id="input">
+        <div id="box"><span id="prefix">&gt; </span><span id="typed"></span><span id="cursor"></span></div>
+        <div id="hint"><span id="hintl">? for shortcuts</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DURATION = 28.75;
+const OK = "✓", BULLET = "●", ELBOW = "⎿", ARROW = "→";
+
+// What the person types into the prompt box; it lands in the history at `send`.
+const TYPING = [
+  { from: 0.4, to: 2.3, send: 2.6, mode: "prompt", text: "add a proofy test: a guest can buy a product and gets a confirmation email" },
+  { from: 4.8, to: 5.9, send: 6.2, mode: "prompt", text: "processing, within 30 seconds, nobody but the guest and the shop" },
+  { from: 16.4, to: 17.3, send: 17.6, mode: "bash", text: "proofy approve guest-checkout" },
+  { from: 19.2, to: 20.4, send: 20.7, mode: "prompt", text: "I changed the checkout. check every approved flow on PR 42" },
+];
+
+const tool = (name, arg) => `<span class="g">${BULLET}</span> <span class="bold">${name}</span>(${arg})`;
+const out = (html) => `  <span class="dim">${ELBOW}</span>  ${html}`;
+const more = (html) => `     ${html}`;
+const say = (html) => `${BULLET} ${html}`;
+const untrusted = `<span class="y">NOT TRUSTED</span>  guest-checkout <span class="g">passed</span>  <span class="g">${OK} R1 ${OK} R2 ${OK} R3 ${OK} R4 ${OK} R5</span>  <span class="y">not approved</span>`;
+
+// Each history line appears at `at`; `until` hides it again; `spin` makes it a spinner line.
+const HISTORY = [
+  { at: 0, cls: "welcome", html: `<span class="c">✻</span> <b>Welcome to Claude Code!</b>\n\n  <span class="dim">/help for help, /status for your current setup\n\n  cwd: /Users/you/shop</span>` },
+  { at: 2.6, cls: "user", html: `&gt; ${TYPING[0].text}` },
+  { at: 2.7, until: 3.4, spin: "Proofing" },
+  { at: 3.4, cls: "gap", html: tool("Read", "e2e/AGENTS.md") },
+  { at: 3.5, html: out("Read 182 lines") },
+  { at: 3.9, cls: "gap", html: say("A few questions first, so every requirement is checkable:") },
+  { at: 4.1, html: "  1. Which order status counts as placed?" },
+  { at: 4.25, html: "  2. How fast must the email arrive?" },
+  { at: 4.4, html: "  3. Who must never receive it?" },
+  { at: 6.2, cls: "user", html: `&gt; ${TYPING[1].text}` },
+  { at: 6.3, until: 7.0, spin: "Writing requirements" },
+  { at: 7.0, cls: "gap", html: tool("Write", "e2e/specs/guest-checkout.md") },
+  { at: 7.1, html: out("Wrote 18 lines") },
+  { at: 7.25, html: more(`<span class="y">R1.</span> The confirmation page shows the stored order's number`) },
+  { at: 7.4, html: more(`<span class="y">R2.</span> The order is stored with status "processing"`) },
+  { at: 7.55, html: more(`<span class="y">R3.</span> Within 30 seconds the guest gets exactly one email`) },
+  { at: 7.7, html: more(`<span class="y">R4.</span> Stock for the product goes down by exactly one`) },
+  { at: 7.85, html: more(`<span class="r">R5.</span> Never: mail to anyone but the guest or the shop`) },
+  { at: 8.3, cls: "gap", html: tool("Bash", "proofy dev up") },
+  { at: 8.4, until: 9.4, html: out(`<span class="dim">Running... docker compose build, then the sandbox seals its network</span>`) },
+  { at: 9.4, html: out(`dev sandbox shop-dev started, sealed`) },
+  { at: 9.5, html: more(`  app      http://localhost:8080`) },
+  { at: 9.6, html: more(`  mailpit  http://localhost:8025`) },
+  { at: 10.1, cls: "gap", html: tool("Write", "e2e/tests/guest-checkout.spec.ts") },
+  { at: 10.2, html: out(`<span class="c">await</span> claim({ spec: <span class="bl">"R2"</span>, expected: <span class="bl">"processing"</span>, actual: order.status })`) },
+  { at: 10.8, cls: "gap", html: tool("Write", "e2e/standins/shipping.example.mjs") },
+  { at: 10.9, html: out("A fake written from the provider's public docs, not from your code") },
+  { at: 11.6, cls: "gap", html: tool("Bash", "proofy dev test guest-checkout") },
+  { at: 11.7, until: 12.3, html: out(`<span class="dim">Running...</span>`) },
+  { at: 12.3, html: out(untrusted) },
+  { at: 12.7, until: 14.1, spin: "Running it twice more" },
+  { at: 14.1, cls: "gap", html: say(`Runs 2 and 3 gave identical results. proofy needs 3 matching runs, so a flaky test can't be approved.`) },
+  { at: 14.8, cls: "gap", html: tool("Bash", "proofy") },
+  { at: 14.9, html: out(`guest-checkout  <span class="bl">ready, waiting for the human to approve</span>`) },
+  { at: 15.4, cls: "gap", html: say(`3 identical runs in the sealed sandbox. Read the spec, then approve it yourself:`) },
+  { at: 15.55, html: `  <span class="bl">! proofy approve guest-checkout</span>  <span class="dim">(I never approve my own tests)</span>` },
+  { at: 17.6, cls: "bang", html: `! ${TYPING[2].text}` },
+  { at: 17.9, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
+  { at: 18.1, html: more(`<span class="dim">Commit e2e/proofy.lock.json with the flow's files</span>`) },
+  { at: 20.7, cls: "user", html: `&gt; ${TYPING[3].text}` },
+  { at: 20.9, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
+  { at: 21.0, until: 22.0, html: out(`<span class="dim">Running... fetching PR 42, docker compose build (online)</span>`) },
+  { at: 22.0, until: 23.0, html: out(`<span class="dim">Running... network sealed: no AI, no internet</span>`) },
+  { at: 23.0, until: 24.2, html: out(`<span class="dim">Running... guest-checkout in a fresh sandbox</span>`) },
+  { at: 24.2, html: out(`<span class="g bold">PASS  every requirement of every approved flow held</span>`) },
+  { at: 24.3, html: more(`<span class="dim">run 20261020-091512  e2e/out/20261020-091512</span>`) },
+  { at: 24.6, cls: "gap", html: more(`<span class="bold">guest-checkout</span>  <span class="g">passed</span>`) },
+  { at: 24.9, html: more(`  <span class="g">${OK}</span> R1   confirmation page shows order #1042`) },
+  { at: 25.15, html: more(`  <span class="g">${OK}</span> R2   stored: processing, 120.00 SEK`) },
+  { at: 25.4, html: more(`  <span class="g">${OK}</span> R3   1 email after 4 s, shows #1042`) },
+  { at: 25.65, html: more(`  <span class="g">${OK}</span> R4   stock 12 ${ARROW} 11`) },
+  { at: 25.9, html: more(`  <span class="g">${OK}</span> R5   no mail to anyone else`) },
+  { at: 26.4, cls: "gap", html: more(`<span class="bold">OUTSIDE CALLS</span>`) },
+  { at: 26.6, html: more(`  shipping.example fake x2`) },
+  { at: 26.8, html: more(`  <span class="y">refused: tracker.example</span>`) },
+  { at: 27.2, cls: "gap", html: more(`posted on github.com/you/shop/pull/42`) },
+  { at: 27.9, cls: "gap", html: say(`All 5 requirements held in a sealed run. The report and screenshots are on PR #42.`) },
+];
+
+const SPINNER = ["·", "✢", "✳", "✶", "✻", "✽"];
+const $ = (id) => document.getElementById(id);
+const clamp = (x) => Math.max(0, Math.min(1, x));
+
+const inner = $("inner");
+const rows = HISTORY.map((entry) => {
+  const el = document.createElement("div");
+  el.className = "l " + (entry.spin ? "gap" : entry.cls ?? "");
+  el.innerHTML = entry.html ?? "";
+  inner.appendChild(el);
+  return el;
+});
+
+function render(t) {
+  HISTORY.forEach((entry, i) => {
+    const visible = t >= entry.at && (entry.until === undefined || t < entry.until);
+    rows[i].style.display = visible ? "" : "none";
+    if (visible && entry.spin) {
+      const glyph = SPINNER[Math.floor(t * 8) % SPINNER.length];
+      const secs = Math.floor(t - entry.at) + 1;
+      rows[i].innerHTML = `<span class="c">${glyph} ${entry.spin}...</span> <span class="dim">(${secs}s · esc to interrupt)</span>`;
+    }
+  });
+  // Keep the newest line in view, like a terminal that scrolls.
+  const overflow = inner.offsetHeight - $("hist").clientHeight;
+  inner.style.transform = `translateY(${-Math.max(0, overflow)}px)`;
+
+  const typing = TYPING.find((x) => t >= x.from && t < x.send);
+  const bash = typing?.mode === "bash";
+  $("box").className = bash ? "bash" : "";
+  $("prefix").textContent = bash ? "! " : "> ";
+  $("hintl").textContent = bash ? "! for bash mode" : "? for shortcuts";
+  $("hintl").style.color = bash ? "var(--bash)" : "";
+  $("typed").textContent = typing ? typing.text.slice(0, Math.round(typing.text.length * clamp((t - typing.from) / (typing.to - typing.from)))) : "";
+  $("cursor").style.opacity = typing || Math.floor(t * 2) % 2 === 0 ? 1 : 0;
+
+  // Fade the end into the start so the loop is smooth.
+  $("stage").style.opacity = Math.min(clamp(t / 0.3), clamp((DURATION - t) / 0.4));
+}
+
+window.DURATION = DURATION;
+window.render = render;
+render(new URLSearchParams(location.search).has("t") ? Number(new URLSearchParams(location.search).get("t")) : 26);
+</script>
+</body>
+</html>
