@@ -1,21 +1,21 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config.js";
 import type { Proc } from "../src/sandbox/docker.js";
-import { prepare, resolveImages, runTests, type Sandbox, type SandboxOptions } from "../src/sandbox/sandbox.js";
+import { prepare, resolveImages, runTests, sandboxProc, type Sandbox, type SandboxOptions } from "../src/sandbox/sandbox.js";
 
 function options(dir: string, config: Record<string, unknown>): SandboxOptions {
   return {
     sourceDir: dir,
+    repoDir: dir,
     e2eDir: join(dir, "e2e"),
     logDir: join(dir, "out"),
     config: configSchema.parse({ compose: ["compose.yml"], app: { service: "web", port: 80 }, ...config }),
     mode: "run",
     project: "proofy-shop-run-1",
     cacheDir: join(dir, "cache"),
-    env: {},
     log: () => {},
   };
 }
@@ -84,5 +84,72 @@ describe("sandbox", () => {
       { service: "db", image: "mariadb:11", id: "sha256:bbb", digest: "mariadb@sha256:ccc" },
       { service: "gone", image: "gone:1" },
     ]);
+  });
+
+  it("runs docker with only what it needs to reach the daemon, never the shell's other variables", async () => {
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    const proc: Proc = async (_program, _args, opts) => {
+      seen.push(opts?.env);
+      return ok();
+    };
+    const shell = { PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock", STRIPE_KEY: "sk_live_x", COMPOSE_PROFILES: "all", SSH_AUTH_SOCK: "/agent" };
+    await sandboxProc(proc, shell)("docker", ["compose", "config"], { timeoutMs: 5 });
+    expect(seen).toEqual([{ PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock" }]);
+  });
+
+  it("refuses a compose variable without a value where it reaches the app, and names where to set it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-unset-"));
+    const warning = (name: string) => `time="x" level=warning msg="The \\"${name}\\" variable is not set. Defaulting to a blank string."\n`;
+    const model = { services: { web: { image: "shop", environment: { KEY: "", PORT: "80" } } } };
+    const raw = { services: { web: { image: "shop", ports: ["${HOST_PORT}:80"], environment: { KEY: "${STRIPE_KEY}", PORT: "80" } } } };
+    const proc: Proc = async (_program, args) =>
+      args.includes("--no-interpolate") ? ok(JSON.stringify(raw)) : { code: 0, stdout: JSON.stringify(model), stderr: warning("STRIPE_KEY") + warning("HOST_PORT"), timedOut: false };
+    await expect(prepare(proc, options(dir, {}))).rejects.toMatchObject({
+      code: "CONFIG_INVALID",
+      message: "The compose files use variables that have no fixed value in the sandbox: ${STRIPE_KEY} in services.web.environment.KEY",
+      suggestions: [expect.stringContaining("never reads the shell's environment"), "Set KEY for service web in e2e/proofy.json env"],
+    });
+    // Set in e2e/proofy.json env, the empty value never reaches the app; the dropped port mapping never did.
+    await expect(prepare(proc, options(dir, { env: { web: { KEY: "sk_test" } } }))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+
+    const broken: Proc = async () => ({ code: 1, stdout: "", stderr: `${warning("NAME")}services.web.container_name '' does not match pattern`, timedOut: false });
+    await expect(prepare(broken, options(dir, {}))).rejects.toMatchObject({ suggestions: [expect.any(String), expect.stringMatching(/^NAME has no value: proofy never reads/)] });
+  });
+
+  it("refuses a variable docker needs where it reaches the app, even with a default, and leaves a warning worded otherwise blank", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-machine-"));
+    const model = { services: { web: { image: "shop", environment: { DATA: "/home/me/data", KEY: "" } } } };
+    const raw = { services: { web: { image: "shop", environment: { DATA: "${HOME:-/root}/data", KEY: "${STRIPE_KEY}" } } } };
+    const proc = (stderr: string): Proc => async (_program, args) => (args.includes("--no-interpolate") ? ok(JSON.stringify(raw)) : { code: 0, stdout: JSON.stringify(model), stderr, timedOut: false });
+    await expect(prepare(proc(""), options(dir, {}))).rejects.toMatchObject({
+      code: "CONFIG_INVALID",
+      message: "The compose files use variables that have no fixed value in the sandbox: ${HOME} in services.web.environment.DATA",
+      suggestions: [expect.stringContaining("never reads the shell's environment"), "Set DATA for service web in e2e/proofy.json env"],
+    });
+    // A compose version that words the warning otherwise refuses nothing more: STRIPE_KEY stays blank.
+    await expect(prepare(proc('level=warning msg="STRIPE_KEY is unset, using an empty string"'), options(dir, { env: { web: { DATA: "/data" } } }))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+  });
+
+  it("refuses a build context that is a symlink inside the repository pointing outside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-context-"));
+    const outside = mkdtempSync(join(tmpdir(), "proofy-outside-"));
+    mkdirSync(join(dir, "app"));
+    symlinkSync(outside, join(dir, "ctx"));
+    const model = (build: Record<string, unknown>) => ({ services: { web: { image: "shop", build } } });
+    const proc = (build: Record<string, unknown>): Proc => async () => ok(JSON.stringify(model(build)));
+    await expect(prepare(proc({ context: join(dir, "app"), additional_contexts: { later: join(dir, "not-yet") } }), options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+    await expect(prepare(proc({ context: join(dir, "ctx") }), options(dir, {}))).rejects.toThrow(/sets build\.context .*ctx, which would give the image build host files outside the repository/);
+    await expect(prepare(proc({ context: join(dir, "app"), additional_contexts: { keys: join(dir, "ctx") } }), options(dir, {}))).rejects.toThrow(/sets build\.additional_contexts\.keys/);
+  });
+
+  it("refuses an included compose file that would take settings from an env file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-include-"));
+    writeFileSync(join(dir, "compose.yml"), "include:\n  - db/compose.yml\nservices:\n  web:\n    image: shop\n");
+    mkdirSync(join(dir, "db"));
+    writeFileSync(join(dir, "db/compose.yml"), "services:\n  db:\n    image: mariadb\n");
+    const proc: Proc = async () => ok(JSON.stringify({ services: { web: { image: "shop" }, db: { image: "mariadb" } } }));
+    await expect(prepare(proc, options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+    writeFileSync(join(dir, "db/.env"), "DB_PASSWORD=real\n");
+    await expect(prepare(proc, options(dir, {}))).rejects.toThrow("An included compose file would take settings from db/.env");
   });
 });

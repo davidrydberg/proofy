@@ -5,7 +5,7 @@ const LABEL: Record<RequirementOutcome, string> = {
   fail: "FAIL",
   "not-covered": "not covered",
   "not-reached": "FAIL (not reached)",
-  "not-checked": "not checked",
+  "not-checked": "FAIL (no claim checked it)",
 };
 
 const DECIDED = { proofy: "proofy compared", test: "test decided" } as const;
@@ -24,16 +24,25 @@ export const EXIT_FOR: Record<Verdict, number> = { pass: 0, fail: 1, environment
 
 const HEADLINE: Record<Verdict, string> = {
   pass: "PASS: every requirement of every approved flow held",
-  fail: "FAIL: an approved flow has a requirement that did not hold",
+  fail: "FAIL: an approved flow has a requirement that did not hold or that no claim checked",
   untrusted: "NOT TRUSTED: some flows are not approved, so their results prove nothing yet",
   environment: "ENVIRONMENT FAILURE: the sandbox did not work, so this run says nothing about the app",
 };
+
+export interface ReportOptions {
+  title?: string;
+  maxShots?: number;
+  /** Whether to show the evidence each claim recorded. Shown unless false. */
+  evidence?: boolean;
+  /** Characters per table cell. */
+  cellMax?: number;
+}
 
 /**
  * The report a person reads: per requirement what was asked, what happened and the evidence.
  * `image` turns a screenshot path relative to the run folder into a link, local or on GitHub.
  */
-export function renderMarkdown(report: RunReport, image: (path: string) => string, options: { title?: string; maxShots?: number } = {}): string {
+export function renderMarkdown(report: RunReport, image: (path: string) => string, options: ReportOptions = {}): string {
   const result = verdict(report);
   const lines = [`## ${options.title ?? "proofy"}: ${HEADLINE[result]}`, ""];
   const source = [report.source.pr ? `PR #${report.source.pr}` : undefined, report.source.commit ? `commit ${report.source.commit.slice(0, 12)}` : undefined, report.source.dirty ? "with uncommitted changes" : undefined].filter(Boolean);
@@ -58,7 +67,7 @@ export function renderMarkdown(report: RunReport, image: (path: string) => strin
     lines.push("");
   }
   for (const flow of report.flows) {
-    lines.push(...flowSection(flow, image, options.maxShots));
+    lines.push(...flowSection(flow, image, options));
   }
   lines.push(...outsideSection(report));
   lines.push(...imagesSection(report));
@@ -68,7 +77,9 @@ export function renderMarkdown(report: RunReport, image: (path: string) => strin
   return lines.join("\n");
 }
 
-function flowSection(flow: FlowResult, image: (path: string) => string, maxShots = Infinity): string[] {
+function flowSection(flow: FlowResult, image: (path: string) => string, options: ReportOptions): string[] {
+  const { maxShots = Infinity, cellMax = 300 } = options;
+  const cell = (text: string) => tableCell(text, cellMax);
   const lines = [`### ${flow.name}`, ""];
   lines.push("| Req | Result | Requirement | What the test did | Expected | Actual | Relied on fakes |", "|---|---|---|---|---|---|---|");
   for (const requirement of flow.requirements) {
@@ -82,7 +93,7 @@ function flowSection(flow: FlowResult, image: (path: string) => string, maxShots
   if (flow.requirements.some((requirement) => requirement.decidedBy === "test")) {
     lines.push(`${DECIDED.proofy}: proofy checked that actual equals expected. ${DECIDED.test}: the test passed its own result, so check that expected and actual support it.`, "");
   }
-  const evidence = flow.requirements.filter((requirement) => requirement.evidence !== undefined);
+  const evidence = options.evidence === false ? [] : flow.requirements.filter((requirement) => requirement.evidence !== undefined);
   if (evidence.length > 0) {
     lines.push("<details><summary>Evidence</summary>", "");
     for (const requirement of evidence) {
@@ -135,7 +146,7 @@ function imagesSection(report: RunReport): string[] {
     "",
     "| Service | Image | Image ID | Registry digest |",
     "|---|---|---|---|",
-    ...report.images.map((image) => `| ${image.service} | ${cell(image.image)} | ${image.id ?? "not found"} | ${image.digest ? cell(image.digest) : "none"} |`),
+    ...report.images.map((image) => `| ${image.service} | ${tableCell(image.image)} | ${image.id ?? "not found"} | ${image.digest ? tableCell(image.digest) : "none"} |`),
     "",
     "</details>",
     "",
@@ -148,6 +159,6 @@ export function countResults(flow: FlowResult): string {
   return [...counts].map(([result, count]) => `${count} ${result}`).join(", ") || "no requirements";
 }
 
-function cell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").slice(0, 300);
+function tableCell(text: string, max = 300): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").slice(0, max);
 }

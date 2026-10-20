@@ -61,7 +61,7 @@ export function renderInit(view: InitView, hints: Hint[], style: Style): string 
 
 const VERDICT_TEXT: Record<Verdict, string> = {
   pass: "PASS  every requirement of every approved flow held",
-  fail: "FAIL  an approved flow has a requirement that did not hold",
+  fail: "FAIL  an approved flow has a requirement that did not hold or that no claim checked",
   untrusted: "NOT TRUSTED  some flows are not approved, so this proves nothing yet",
   environment: "ENVIRONMENT FAILURE  the sandbox did not work; this says nothing about the app",
 };
@@ -86,7 +86,7 @@ export function renderRun(report: RunReport, result: Verdict, reportPath: string
           : requirement.result === "not-covered"
             ? `${requirement.text}  ${p.dim(`(not covered: ${requirement.why ?? ""})`)}`
             : requirement.result === "not-checked"
-              ? `${requirement.text}  ${p.yellow("(no claim checks it)")}`
+              ? `${requirement.text}  ${p.red("(no claim checked it in this run)")}`
               : requirement.result === "not-reached"
                 ? `${requirement.text}  ${p.red("(not reached: the test stopped before checking it)")}`
                 : `${requirement.text}  ${p.red(`expected ${requirement.expected ?? "?"}, got ${requirement.actual ?? "?"}`)}`;
@@ -118,8 +118,6 @@ function outcomeMark(result: RequirementOutcome, p: Painter): string {
       return p.green(GLYPH.ok);
     case "not-covered":
       return p.dim("-");
-    case "not-checked":
-      return p.yellow(GLYPH.warn);
     default:
       return p.red(GLYPH.fail);
   }

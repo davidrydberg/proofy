@@ -31,7 +31,7 @@ export const configSchema = z
       .default({})
       .describe("Outside hosts: fake answers from e2e/standins/<host>.mjs, record accepts everything. Unlisted hosts are refused"),
     assets: z.array(z.url()).default([]).describe("Static third-party files downloaded at install and served in the sealed run"),
-    env: z.record(name, z.record(name, z.string())).default({}).describe("Settings per compose service. The repository's .env is never read"),
+    env: z.record(name, z.record(name, z.string())).default({}).describe("Settings per compose service. Neither the repository's .env nor the shell's environment is ever read"),
     limits: z
       .strictObject({
         startMinutes: z.number().positive().default(10),

@@ -9,7 +9,7 @@ import { loadProject } from "./context.js";
 import type { CommandResult } from "./types.js";
 
 export const APPROVE_HELP = `usage: proofy approve <flow>
-description: For the human, never the agent. After 3 runs with identical results, records fingerprints of the flow's requirements, test and fakes, e2e/proofy.json and the compose files. Works only in an interactive terminal and asks you to type the flow name
+description: For the human, never the agent. After 3 runs with identical results, records fingerprints of the flow's requirements, test and the other files in e2e/tests, every file in e2e/standins, e2e/proofy.json and the compose files with what they include or extend. Works only in an interactive terminal and asks you to type the flow name
 examples:
   proofy approve guest-checkout
 `;

@@ -1,17 +1,22 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import type { Config } from "../config.js";
 import type { Paths } from "../project.js";
+import { composeSources } from "../sandbox/sources.js";
 
 export interface Fingerprint {
   spec: string;
+  /** The flow's test and every other file in tests/ it could import: everything there but other flows' tests. */
   test: string;
-  /** Every fake and the hosts list together: a change to any fake can change any flow's result. */
+  /** Every file in standins/, at any depth, and the hosts list together: a change to any fake can change any flow's result. */
   fakes: string;
   /** e2e/proofy.json without $schema: how the app starts, its settings, seed, commands, hosts, assets and limits. */
   config: string;
-  /** The contents of the compose files the config lists. The app's own files, such as Dockerfiles, are the code under test. */
+  /**
+   * The contents of the compose files the config lists and the files they include or extend. The app's own files, such
+   * as Dockerfiles, are the code under test.
+   */
   compose: string;
 }
 
@@ -27,27 +32,21 @@ const PARTS: Record<keyof Fingerprint, string> = {
 export async function fingerprint(paths: Paths, config: Config, flow: string): Promise<Fingerprint> {
   return {
     spec: await hashFile(join(paths.specs, `${flow}.md`)),
-    test: await hashFile(join(paths.tests, `${flow}.spec.ts`)),
+    test: await testHash(paths, flow),
     fakes: await fakesHash(paths, config),
     config: configHash(config),
     compose: await composeHash(paths, config),
   };
 }
 
+async function testHash(paths: Paths, flow: string): Promise<string> {
+  const own = `${flow}.spec.ts`;
+  const files = (await filesIn(paths.tests)).filter((file) => !file.endsWith(".spec.ts") || basename(file) === own);
+  return hashFiles(paths.tests, files);
+}
+
 export async function fakesHash(paths: Paths, config: Config): Promise<string> {
-  const hash = createHash("sha256");
-  hash.update(JSON.stringify(Object.entries(config.hosts).sort()));
-  let files: string[] = [];
-  try {
-    files = (await readdir(paths.standins)).filter((file) => file.endsWith(".mjs")).sort();
-  } catch {
-    // No fakes yet.
-  }
-  for (const file of files) {
-    hash.update(file);
-    hash.update(await readFile(join(paths.standins, file)));
-  }
-  return short(hash.digest("hex"));
+  return hashFiles(paths.standins, await filesIn(paths.standins), JSON.stringify(Object.entries(config.hosts).sort()));
 }
 
 /** The parsed config, so formatting, key order and spelled-out defaults do not count as changes. */
@@ -58,9 +57,40 @@ function configHash(config: Config): string {
 
 async function composeHash(paths: Paths, config: Config): Promise<string> {
   const hash = createHash("sha256");
-  for (const file of config.compose) {
+  for (const file of (await composeSources(paths.root, config.compose)).files) {
     hash.update(`${file}\n`);
-    hash.update(await hashFile(join(paths.root, file)));
+    hash.update(await hashFile(resolve(paths.root, file)));
+  }
+  return short(hash.digest("hex"));
+}
+
+// Editor backup and swap files.
+const LITTER = /(~|\.swp|\.swo)$/;
+
+/**
+ * Every file in a folder and its subfolders, relative to it and sorted. None when the folder is missing. Hidden files
+ * and folders and editor backups are left out: OS and editor litter is never in another checkout.
+ */
+async function filesIn(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
+      .filter((file) => !file.split(sep).some((part) => part.startsWith(".")) && !LITTER.test(file))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Names and contents together, so renaming or moving a file is a change too. */
+async function hashFiles(dir: string, files: string[], extra = ""): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(extra);
+  for (const file of files) {
+    hash.update(`${file}\n`);
+    hash.update(await readFile(join(dir, file)));
   }
   return short(hash.digest("hex"));
 }

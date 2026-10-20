@@ -8,11 +8,14 @@ import { spawnProc } from "../../src/sandbox/docker.js";
 
 const FIXTURE = new URL("../fixtures/tiny-shop/", import.meta.url).pathname;
 
+// A value in the shell running proofy, which must never reach the app.
+const SHELL = { SHOP_MODE: "from-the-shell", PROOFY_SHELL_KEY: "sk_live_shell" };
+
 async function cli(argv: string[], cwd: string): Promise<{ code: number; out: string }> {
   let out = "";
   // The person at the terminal confirms an approval by typing the flow name.
   const ask = async () => argv[1] ?? "";
-  const code = await runCli(argv, { cwd, env: { ...process.env, NO_COLOR: "1" }, proc: spawnProc, now: () => new Date(), log: () => {}, ask }, { write: (text) => (out += text), isTTY: false });
+  const code = await runCli(argv, { cwd, env: { ...process.env, ...SHELL, NO_COLOR: "1" }, proc: spawnProc, now: () => new Date(), log: () => {}, ask }, { write: (text) => (out += text), isTTY: false });
   return { code, out };
 }
 
@@ -54,8 +57,21 @@ describe("sealed sandbox on Docker", () => {
     expect(requests).not.toContain("sk_sandbox");
 
     expect((await cli(["dev", "up"], dir)).code).toBe(0);
+    const state = JSON.parse(readFileSync(join(dir, "e2e/out/dev.json"), "utf8")) as { project: string; composeFile: string };
+    const inside = (service: string, ...command: string[]) =>
+      execFileSync("docker", ["compose", "-p", state.project, "-f", state.composeFile, "exec", "-T", service, ...command], { env: { PATH: process.env.PATH, HOME: process.env.HOME } }).toString().trim();
     try {
-      for (let i = 0; i < 2; i++) expect((await cli(["dev", "test"], dir)).code).toBe(4);
+      // Settings come from the compose files and e2e/proofy.json only; secrets and configs reach the app.
+      expect(inside("shop", "printenv", "SHOP_MODE")).toBe("sandbox");
+      expect(inside("shop", "cat", "/run/secrets/shop_key")).toBe("sk_sandbox_file");
+      expect(inside("shop", "cat", "/app/settings.txt")).toBe("currency=SEK");
+      // Each dev test starts the fakes afresh, so the fake-service container holds only the last test's calls.
+      const calls: string[] = [];
+      for (let i = 0; i < 2; i++) {
+        expect((await cli(["dev", "test"], dir)).code).toBe(4);
+        calls.push(inside("proofy-standin", "wget", "-q", "-O", "-", "http://127.0.0.1:8099/requests?host=api.payments.test"));
+      }
+      expect((JSON.parse(calls[1]!) as unknown[]).length).toBe((JSON.parse(calls[0]!) as unknown[]).length);
       const status = await cli([], dir);
       expect(status.out).toContain("buy-coffee,ready");
       expect(status.out).toContain("sealed,ready");
@@ -74,6 +90,15 @@ describe("sealed sandbox on Docker", () => {
     writeFileSync(join(dir, "e2e/standins/api.payments.test.mjs"), `${readFileSync(join(dir, "e2e/standins/api.payments.test.mjs"), "utf8")}\n// changed\n`);
     expect((await cli([], dir)).out).toContain("buy-coffee,out-of-date");
     expect((await cli(["run", "--all"], dir)).code).toBe(4);
+  });
+
+  it("refuses a compose variable that would take its value from the shell", async () => {
+    const dir = shop();
+    writeFileSync(join(dir, "compose.yml"), readFileSync(join(dir, "compose.yml"), "utf8").replace("      SMTP_HOST: mailpit\n", "      SMTP_HOST: mailpit\n      PAYMENT_KEY: ${PROOFY_SHELL_KEY}\n"));
+    const result = await cli(["run", "buy-coffee"], dir);
+    expect(result.code).toBe(2);
+    expect(result.out).toContain("${PROOFY_SHELL_KEY} in services.shop.environment.PAYMENT_KEY");
+    expect(result.out).not.toContain("sk_live_shell");
   });
 
   it("reports a broken sandbox as an environment failure, never as a failed requirement", async () => {

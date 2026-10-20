@@ -39,13 +39,13 @@ Do this once, when the human asks you to set up proofy.
 
 1. **The app in Docker.** `compose` in `proofy.json` lists the app's compose files. If the repository has none, draft one from `templates/compose.yml`, show it to the human and wait for their OK. The app must start from an empty database, and everything it needs must be installed when the image is built: the sandbox has no internet once it runs. Give the database a `healthcheck`, so the app starts only when it is ready.
 2. **Where the browser starts.** `app` is the compose service and the port inside the container, not a published port.
-3. **Settings.** `env` holds the app's settings per service. `proofy init` filled it from `.env.example` and replaced secret-looking values with fakes. The repository's `.env` is never used. Check every value makes sense for an empty sandbox.
+3. **Settings.** `env` holds the app's settings per service. `proofy init` filled it from `.env.example` and replaced secret-looking values with fakes. The repository's `.env` is never used. Check every value makes sense for an empty sandbox. The shell's environment is never used either: a `${VAR}` in the compose files that reaches the app needs its setting here or a default in the compose file, such as `${VAR:-value}`. A variable docker itself needs, such as `${HOME}` or `${PATH}`, would come from the machine, so use a fixed value instead; a default does not help.
 4. **The seed.** `seed` is one command that prepares the empty database, such as migrations and the reference data every test needs. Test-specific data does not belong here. Leave it out if the app needs nothing.
 5. **Commands for tests.** `exec` names the commands tests may run inside a service, such as reading a stored order or running a scheduled job. A test calls `exec("name", [extra, args])` and gets stdout. Prefer the app's own CLI over raw SQL.
 6. **Outside services.** Find every host the app calls: search the code and config for `http://` and `https://`, SDK clients and mail settings. List each in `hosts`:
    - `fake` when the app needs a real answer, such as a payment or a shipping quote. Write `standins/<host>.mjs` from `templates/standin.mjs` and the provider's public docs.
    - `record` when the app ignores the answer, such as analytics or tracking.
-   - Leave a host out on purpose only if the app copes with it being down. Every refused call is listed in the report.
+   - Leave a host out on purpose only if the app copes with it being down. Every refused HTTP or HTTPS call is listed in the report.
 7. **HTTPS.** Fakes answer HTTPS with a certificate authority proofy creates. Make the app trust it in the compose file; `templates/compose.yml` shows how for PHP, Node and Python.
 8. **Mail.** Point the app's SMTP settings at host `mailpit`, port `1025`, no TLS.
 9. **Check it.** Run `proofy dev up`. It builds the images, starts the sealed sandbox and seeds it. Fix what fails, using `e2e/out/sandbox.log` and `e2e/out/seed.log`. Run `proofy` until setup shows no gaps, then tell the human what you set up and what you could not.
@@ -78,7 +78,7 @@ Do this once, when the human asks you to set up proofy.
 
 - When a change to the app touches a covered flow, propose the requirement changes to the human before writing code.
 - A changed requirements file or test makes the flow out of date until the human approves it again. Other flows keep running.
-- A changed fake, `proofy.json` or compose file makes every flow out of date until the human approves each again.
+- A changed file in `standins/`, a file in `tests/` other than a flow's test, `proofy.json`, or a compose file or a file it includes or extends makes every flow out of date until the human approves each again.
 - When the app changed on purpose, update the requirements first, then the test, then prove it again.
 
 ## When a run is red

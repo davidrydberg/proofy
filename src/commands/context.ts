@@ -1,13 +1,15 @@
 import { loadConfig, type Config } from "../config.js";
 import type { Deps } from "../deps.js";
 import { CliError } from "../errors.js";
-import { exists, findRoot, pathsFor, type Paths } from "../project.js";
+import { exists, findRoot, gitRoot, pathsFor, type Paths } from "../project.js";
 import { readApprovals, type Approvals } from "../run/approvals.js";
 import type { RunReport } from "../run/results.js";
 import { cacheDirFor } from "../sandbox/sandbox.js";
 
 export interface Project {
   root: string;
+  /** The repository's top folder, or the root outside git. */
+  top: string;
   paths: Paths;
   config: Config;
   approvals: Approvals;
@@ -21,7 +23,7 @@ export async function loadProject(deps: Deps): Promise<Project> {
     throw new CliError("proofy is not set up in this repository", "NOT_SET_UP", ["Run `proofy init`"]);
   }
   const config = await loadConfig(paths.config, "e2e/proofy.json");
-  return { root, paths, config, approvals: await readApprovals(paths), cacheDir: cacheDirFor(deps.env, root) };
+  return { root, top: (await gitRoot(root)) ?? root, paths, config, approvals: await readApprovals(paths), cacheDir: cacheDirFor(deps.env, root) };
 }
 
 export async function workingTreeInfo(deps: Deps, root: string): Promise<RunReport["source"]> {

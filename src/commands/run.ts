@@ -6,12 +6,12 @@ import type { Deps } from "../deps.js";
 import { CliError } from "../errors.js";
 import { changedApprovals, exportPullRequest, postReport, pullRequest, type PullRequest } from "../github.js";
 import { renderRun, type Hint } from "../human.js";
-import { exists, flowNames, gitRoot, pathsFor, type Paths } from "../project.js";
+import { exists, flowNames, pathsFor, type Paths } from "../project.js";
 import { approvalsFile } from "../run/approvals.js";
 import { planFlows, sealedRun, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
 import { EXIT_FOR, verdict } from "../run/report.js";
-import type { RunReport } from "../run/results.js";
+import { failing, type RunReport } from "../run/results.js";
 import { loadProject, projectName, workingTreeInfo } from "./context.js";
 import type { CommandResult } from "./types.js";
 
@@ -40,9 +40,10 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
     throw new CliError("Name the flows to run, or use --all for every approved flow", "VALIDATION_ERROR", ["Run `proofy` to see flows and their states"]);
   }
   const project = await loadProject(deps);
-  const { root, paths } = project;
+  const { root, top, paths } = project;
 
   let source: Paths = paths;
+  let sourceTop = top;
   let config = project.config;
   let pr: PullRequest | undefined;
   let sourceInfo: RunReport["source"];
@@ -51,9 +52,9 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
     const dir = join(project.cacheDir, "pull-requests", String(pr.number));
     deps.log(`exporting pull request #${pr.number} (${pr.sha.slice(0, 12)})`);
     // The project can sit in a subfolder of the repository; the export holds the whole repository.
-    const top = (await gitRoot(root)) ?? root;
     await exportPullRequest(deps.proc, top, pr, dir);
     source = pathsFor(join(dir, relative(top, root)));
+    sourceTop = dir;
     if (await exists(source.config)) config = await loadConfig(source.config, `e2e/proofy.json in PR #${pr.number}`);
     const approvalsChanged = await changedApprovals(deps.proc, top, pr, relative(top, approvalsFile(paths)).split(sep).join("/"));
     sourceInfo = { commit: pr.sha, pr: pr.number, ...(approvalsChanged.length > 0 ? { approvalsChanged } : {}) };
@@ -62,7 +63,7 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
   }
 
   const available = await flowNames(source);
-  const ctx: RunContext = { proc: deps.proc, env: deps.env, now: deps.now, log: deps.log, base: paths, source, config, approvals: project.approvals, cacheDir: project.cacheDir, sourceInfo };
+  const ctx: RunContext = { proc: deps.proc, env: deps.env, now: deps.now, log: deps.log, base: paths, source, sourceTop, config, approvals: project.approvals, cacheDir: project.cacheDir, sourceInfo };
   const names = flags.positionals;
   for (const name of names) {
     if (!available.includes(name)) {
@@ -112,7 +113,7 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
   const relative = runDir.startsWith(root) ? runDir.slice(root.length + 1) : runDir;
   const failed = report.flows.flatMap((flow) =>
     flow.requirements
-      .filter((requirement) => requirement.result === "fail" || requirement.result === "not-reached")
+      .filter((requirement) => failing(requirement.result))
       .map((requirement) => ({ flow: flow.name, req: requirement.id, expected: requirement.expected ?? "", actual: requirement.actual ?? requirement.result })),
   );
   const hints: Hint[] = [];
@@ -127,7 +128,7 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
     run: report.id,
     verdict: result,
     report: `${relative}/report.md`,
-    flows: report.flows.map((flow) => ({ flow: flow.name, approved: flow.approved ? "yes" : "no", status: flow.status, failed: flow.requirements.filter((r) => r.result === "fail" || r.result === "not-reached").length })),
+    flows: report.flows.map((flow) => ({ flow: flow.name, approved: flow.approved ? "yes" : "no", status: flow.status, failed: flow.requirements.filter((r) => failing(r.result)).length })),
   };
   if (approvalsChanged.length > 0) data.approvals_changed_in_pr = approvalsChanged;
   if (report.environmentError) data.environment_error = report.environmentError.split("\n")[0];

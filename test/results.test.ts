@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runResult } from "../src/commands/run.js";
 import { proven } from "../src/run/history.js";
 import { renderMarkdown, verdict } from "../src/run/report.js";
 import { flowResult, type FlowResult, type PlannedFlow, type RunReport } from "../src/run/results.js";
@@ -33,6 +34,22 @@ describe("results", () => {
     expect(flow.unknownClaims).toEqual(["R9"]);
     expect(flow.shots).toEqual([{ test: "t", file: "f.png", label: "l" }]);
     expect(flow.status).toBe("failed");
+  });
+
+  it("fails a flow when a requirement ends with no claim, even when every test passed", () => {
+    const flow = flowResult(plan, [claim("R1", true), claim("R2", true), { type: "not-covered", test: "t", spec: "R4", why: "sealed" }], passed);
+    expect(flow.requirements.map((r) => r.result)).toEqual(["pass", "pass", "not-checked", "not-covered"]);
+    expect(flow.status).toBe("failed");
+    const report: RunReport = { id: "x", kind: "run", startedAt: "", finishedAt: "", source: {}, flows: [flow], outside: [], lookedUpOnly: [], notes: [] };
+    expect(verdict(report)).toBe("fail");
+    const md = renderMarkdown(report, (path) => path);
+    expect(md).toContain("FAIL: an approved flow has a requirement that did not hold or that no claim checked");
+    expect(md).toContain("| R3 | FAIL (no claim checked it) |");
+    const result = runResult(report, "/repo/e2e/out/x", "/repo");
+    expect(result.exitCode).toBe(1);
+    expect(result.data.failed).toEqual([{ flow: "checkout", req: "R3", expected: "", actual: "not-checked" }]);
+    expect(result.pretty?.({ color: false, width: 120 })).toContain("\u2717 R3   Email sent.  (no claim checked it in this run)");
+    expect(flowResult(plan, [claim("R1", true), claim("R2", true), claim("R3", true), { type: "not-covered", test: "t", spec: "R4", why: "sealed" }], passed).status).toBe("passed");
   });
 
   it("marks unclaimed requirements as not reached when a test broke for another reason", () => {

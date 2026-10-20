@@ -180,12 +180,17 @@ export function flowResult(plan: PlannedFlow, entries: Entry[], tests: TestResul
     approved: plan.approved,
     ...(plan.changed ? { changed: plan.changed } : {}),
     fingerprint: plan.fingerprint,
-    status: requirements.some((requirement) => requirement.result === "fail" || requirement.result === "not-reached") ? "failed" : "passed",
+    status: requirements.some((requirement) => failing(requirement.result)) ? "failed" : "passed",
     requirements,
     tests,
     shots: entries.filter((entry): entry is Extract<Entry, { type: "shot" }> => entry.type === "shot").map(({ test, file, label }) => ({ test, file, label })),
     unknownClaims,
   };
+}
+
+/** A requirement that did not hold, or that no claim checked in this run: only not-covered is excused, by the test's own reason. */
+export function failing(result: RequirementOutcome): boolean {
+  return result === "fail" || result === "not-reached" || result === "not-checked";
 }
 
 /** The per-requirement results that must be identical across three runs before a flow can be approved. */
