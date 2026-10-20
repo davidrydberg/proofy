@@ -11,6 +11,8 @@ export interface ProcResult {
 export interface ProcOptions {
   cwd?: string;
   timeoutMs?: number;
+  /** The program's whole environment. proofy's own environment when absent. */
+  env?: NodeJS.ProcessEnv;
   /** Streams output as it comes, for long steps such as image builds and test runs. */
   onOutput?: (chunk: string) => void;
 }
@@ -20,7 +22,7 @@ export type Proc = (program: string, args: string[], options?: ProcOptions) => P
 
 export const spawnProc: Proc = (program, args, options = {}) =>
   new Promise((resolve, reject) => {
-    const child = spawn(program, args, { cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(program, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let timedOut = false;

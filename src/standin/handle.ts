@@ -1,4 +1,6 @@
+import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -63,10 +65,30 @@ const CONTENT_TYPES: Record<string, string> = {
   ttf: "font/ttf",
 };
 
+// Node caches every module it imports for the life of the process. A fake is imported with the generation in its URL,
+// so a reset loads the fake as it is now; this hook passes the generation on to every file in the standins folder that
+// the fake imports, such as a shared helper or a JSON file.
+const GENERATION = "proofy-generation";
+
+/** Makes every file a fake imports from the standins folder load fresh after a reset. Process-wide; once, in the container. */
+export function freshImports(standinsDir: string): void {
+  // Node resolves a module to its real path.
+  const folder = `${pathToFileURL(existsSync(standinsDir) ? realpathSync(standinsDir) : standinsDir).href}/`;
+  registerHooks({
+    resolve(specifier, context, next) {
+      const resolved = next(specifier, context);
+      const generation = context.parentURL ? new URL(context.parentURL).searchParams.get(GENERATION) : null;
+      if (generation === null || !resolved.url.startsWith(folder) || resolved.url.includes("?")) return resolved;
+      return { ...resolved, url: `${resolved.url}?${GENERATION}=${generation}` };
+    },
+  });
+}
+
 export class Standin {
-  readonly requests: RecordedRequest[] = [];
+  requests: RecordedRequest[] = [];
   private readonly handlers = new Map<string, Promise<Handler>>();
   private readonly states = new Map<string, Map<string, unknown>>();
+  private generation = 0;
 
   constructor(
     private readonly setup: StandinSetup,
@@ -125,11 +147,19 @@ export class Standin {
     return host ? this.requests.filter((request) => request.host === host) : this.requests;
   }
 
+  /** Forgets loaded fakes, their state and the recorded requests, so the next request runs the fakes as they are now. */
+  reset(): void {
+    this.generation++;
+    this.handlers.clear();
+    this.states.clear();
+    this.requests = [];
+  }
+
   private handler(host: string): Promise<Handler> {
     let handler = this.handlers.get(host);
     if (!handler) {
       const file = join(this.setup.standinsDir, `${host}.mjs`);
-      handler = import(pathToFileURL(file).href).then((module: { default?: unknown }) => {
+      handler = import(`${pathToFileURL(file).href}?${GENERATION}=${this.generation}`).then((module: { default?: unknown }) => {
         if (typeof module.default !== "function") throw new Error(`e2e/standins/${host}.mjs has no default export function`);
         return module.default as Handler;
       });

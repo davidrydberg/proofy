@@ -1,6 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { answer, parseQuery } from "../src/standin/dns.js";
 import { Standin } from "../src/standin/handle.js";
@@ -65,5 +67,38 @@ describe("fake-service container", () => {
     const last = standin.recordedFor("track.test").at(-1)!;
     expect(last).toMatchObject({ method: "POST", path: "/v1/x", query: { a: "1" }, body: '{"a":1}' });
     expect(last.headers).toMatchObject({ authorization: "(redacted)", "x-api-key": "(redacted)", "x-request-token": "(redacted)", accept: "json" });
+  });
+
+  it("after a reset runs the fakes as they are now, with every file they import, empty state and no earlier requests", () => {
+    // In a Node process of its own, as in the container: module hooks and Node's module cache are process-wide.
+    const fakes = mkdtempSync(join(tmpdir(), "proofy-reset-"));
+    mkdirSync(join(fakes, "lib"));
+    writeFileSync(join(fakes, "lib/price.mjs"), "export const price = 1;");
+    writeFileSync(join(fakes, "lib/currency.json"), '{ "code": "EUR" }');
+    writeFileSync(
+      join(fakes, "api.pay.test.mjs"),
+      `import { price } from "./lib/price.mjs";
+      import currency from "./lib/currency.json" with { type: "json" };
+      export default (req, ctx) => { ctx.state.set("n", (ctx.state.get("n") ?? 0) + 1); return { status: 200, json: { price, currency: currency.code, n: ctx.state.get("n") } }; };`,
+    );
+    const handle = join(mkdtempSync(join(tmpdir(), "proofy-handle-")), "handle.mjs");
+    writeFileSync(handle, ts.transpileModule(readFileSync(new URL("../src/standin/handle.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
+    const script = `
+      import { writeFileSync } from "node:fs";
+      import { freshImports, Standin } from ${JSON.stringify(handle)};
+      const dir = ${JSON.stringify(fakes)};
+      freshImports(dir);
+      const standin = new Standin({ hosts: { "api.pay.test": "fake" }, assets: {}, standinsDir: dir, assetsDir: dir });
+      const call = async () => (await standin.handle("api.pay.test", "GET", "/", {}, Buffer.alloc(0))).json;
+      const seen = [await call()];
+      writeFileSync(dir + "/lib/price.mjs", "export const price = 2;");
+      writeFileSync(dir + "/lib/currency.json", '{ "code": "SEK" }');
+      seen.push(await call(), standin.requests.length);
+      standin.reset();
+      seen.push(standin.requests.length, await call(), standin.recordedFor("api.pay.test").map((request) => request.seq));
+      console.log(JSON.stringify(seen));
+    `;
+    const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
+    expect(JSON.parse(out)).toEqual([{ price: 1, currency: "EUR", n: 1 }, { price: 1, currency: "EUR", n: 2 }, 2, 0, { price: 2, currency: "SEK", n: 1 }, [1]]);
   });
 });

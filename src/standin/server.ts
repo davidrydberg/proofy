@@ -5,7 +5,7 @@ import { createSecureContext } from "node:tls";
 import { ADMIN_PORT, MOUNT } from "../sandbox/contract.js";
 import { ensureCa, leafFor } from "./ca.js";
 import { startDns } from "./dns.js";
-import { Standin, type StandinResponse, type StandinSetup } from "./handle.js";
+import { freshImports, Standin, type StandinResponse, type StandinSetup } from "./handle.js";
 
 // The fake-service container's entry point. Paths are the container's mounts, set up by the sandbox compose file.
 const SETUP_FILE = `${MOUNT.runSetup}/standin.json`;
@@ -26,6 +26,7 @@ if (command === "ca") {
 function serve(): void {
   const setup = JSON.parse(readFileSync(SETUP_FILE, "utf8")) as Setup;
   ensureCa(CA_DIR);
+  freshImports(setup.standinsDir);
   const standin = new Standin(setup, (request) => appendFileSync(`${OUT}/requests.jsonl`, `${JSON.stringify(request)}\n`));
   const seen = new Set<string>();
   startDns(setup.address, (name) => {
@@ -65,6 +66,11 @@ function serve(): void {
   createHttp((req, res) => {
     const url = new URL(req.url ?? "/", "http://admin");
     if (url.pathname === "/health") {
+      send(res, { status: 200, json: { ok: true } });
+    } else if (url.pathname === "/reset" && req.method === "POST") {
+      // Called by the host before each dev test. Names looked up before it count again, so each test lists its own.
+      standin.reset();
+      seen.clear();
       send(res, { status: 200, json: { ok: true } });
     } else if (url.pathname === "/requests") {
       send(res, { status: 200, json: standin.recordedFor(url.searchParams.get("host") ?? undefined) });
