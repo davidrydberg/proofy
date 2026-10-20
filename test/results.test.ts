@@ -8,7 +8,7 @@ import type { Entry } from "../src/test/index.js";
 const plan: PlannedFlow = {
   name: "checkout",
   approved: true,
-  fingerprint: { spec: "a", test: "b", fakes: "c" },
+  fingerprint: { spec: "a", test: "b", fakes: "c", config: "d", compose: "e" },
   requirements: parseRequirements("# Checkout\n\nR1. Order number shown.\n- R2: Paid order stored.\n**R3**) Email sent.\nR4. Card page works.\nR1. duplicate ignored\n"),
 };
 

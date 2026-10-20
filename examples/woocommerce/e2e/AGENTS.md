@@ -71,13 +71,14 @@ Do this once, when the human asks you to set up proofy.
    - `mail.search(query, { atLeast, settleMs })`: every email matching a Mailpit search, whoever it went to. Search for something only this test's data has, such as a `tag()` value. Each email has `to`, `cc` and `bcc`.
    - `standin.requests(host, { atLeast })`: what the app sent to a fake or recorded host.
 5. **Prove it.** With `proofy dev up` running, run `proofy dev test <flow>` until three runs in a row give identical results per requirement. `proofy` shows the count. A requirement that fails because the app is wrong stays red: that is a finding, not a broken test. A flow whose runs differ is flaky: fix the test, never add retries.
-6. **Second opinion.** Ask a separate agent, given only `specs/<flow>.md` and `tests/<flow>.spec.ts` and no app code, to answer for each requirement: "what wrong behaviour of the app would still pass this check?" Tighten the checks it finds, then give the human its answers.
+6. **Second opinion.** Ask a separate agent, given only `specs/<flow>.md`, `tests/<flow>.spec.ts`, every fake in `standins/` and the provider documentation each fake links, and no app code, to answer for each requirement: "what wrong behaviour of the app would still pass this check?", and for each fake: "where does this fake behave differently from the provider's documentation?" Tighten the checks and fix the fakes it finds, then give the human its answers.
 7. **Hand over.** Tell the human the flow is ready, what each requirement checks, any findings, and that they can run `proofy approve <flow>`.
 
 ## Changing a flow
 
 - When a change to the app touches a covered flow, propose the requirement changes to the human before writing code.
-- A changed requirements file, test or fake makes the flow out of date until the human approves it again. Other flows keep running.
+- A changed requirements file or test makes the flow out of date until the human approves it again. Other flows keep running.
+- A changed fake, `proofy.json` or compose file makes every flow out of date until the human approves each again.
 - When the app changed on purpose, update the requirements first, then the test, then prove it again.
 
 ## When a run is red

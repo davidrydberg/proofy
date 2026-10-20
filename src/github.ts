@@ -13,6 +13,9 @@ const HISTORY = 10;
 export interface PullRequest {
   number: number;
   sha: string;
+  /** The branch it merges into, and that branch's commit when it was read. */
+  baseRef: string;
+  baseSha: string;
   url: string;
 }
 
@@ -28,7 +31,7 @@ async function gh(proc: Proc, args: string[], cwd: string): Promise<string> {
 }
 
 export async function pullRequest(proc: Proc, root: string, number?: number): Promise<PullRequest> {
-  const args = ["pr", "view", ...(number === undefined ? [] : [String(number)]), "--json", "number,headRefOid,url"];
+  const args = ["pr", "view", ...(number === undefined ? [] : [String(number)]), "--json", "number,headRefOid,baseRefName,baseRefOid,url"];
   let out: string;
   try {
     out = await gh(proc, args, root);
@@ -38,13 +41,16 @@ export async function pullRequest(proc: Proc, root: string, number?: number): Pr
     }
     throw error;
   }
-  const parsed = JSON.parse(out) as { number: number; headRefOid: string; url: string };
-  return { number: parsed.number, sha: parsed.headRefOid, url: parsed.url };
+  const parsed = JSON.parse(out) as { number: number; headRefOid: string; baseRefName: string; baseRefOid: string; url: string };
+  return { number: parsed.number, sha: parsed.headRefOid, baseRef: parsed.baseRefName, baseSha: parsed.baseRefOid, url: parsed.url };
 }
 
-/** The pull request's files in a folder of their own. The working copy is never touched. `root` is the repository's top folder. */
+/**
+ * The pull request's files in a folder of their own. The working copy is never touched. `root` is the repository's top folder.
+ * The base branch is fetched too, for `changedApprovals`.
+ */
 export async function exportPullRequest(proc: Proc, root: string, pr: PullRequest, dir: string): Promise<void> {
-  const fetch = await proc("git", ["-C", root, "fetch", "--quiet", "origin", `refs/pull/${pr.number}/head`], { timeoutMs: 300_000 });
+  const fetch = await proc("git", ["-C", root, "fetch", "--quiet", "origin", `refs/pull/${pr.number}/head`, `refs/heads/${pr.baseRef}`], { timeoutMs: 300_000 });
   if (fetch.code !== 0) {
     throw new CliError(`Fetching pull request #${pr.number} failed`, "ENVIRONMENT_ERROR", [tail(fetch.stderr, 5)]);
   }
@@ -56,6 +62,29 @@ export async function exportPullRequest(proc: Proc, root: string, pr: PullReques
   const unpacked = await proc("tar", ["-xf", archive, "-C", dir]);
   await rm(archive, { force: true });
   if (unpacked.code !== 0) throw new CliError("Unpacking the pull request failed", "ENVIRONMENT_ERROR", [tail(unpacked.stderr, 5)]);
+}
+
+/**
+ * Flows whose entry in the approvals file differs between where the pull request branched off and its head: approvals it adds,
+ * changes or removes, so a reviewer sees each one. `lockFile` is relative to the repository's top folder.
+ */
+export async function changedApprovals(proc: Proc, root: string, pr: PullRequest, lockFile: string): Promise<string[]> {
+  const base = await proc("git", ["-C", root, "merge-base", pr.baseSha, pr.sha]);
+  if (base.code !== 0) throw new CliError(`Finding where pull request #${pr.number} branched off failed`, "ENVIRONMENT_ERROR", [tail(base.stderr, 5)]);
+  const before = await approvalsAt(proc, root, base.stdout.trim(), lockFile);
+  const after = await approvalsAt(proc, root, pr.sha, lockFile);
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((flow) => JSON.stringify(before[flow]) !== JSON.stringify(after[flow])).sort();
+}
+
+async function approvalsAt(proc: Proc, root: string, commit: string, lockFile: string): Promise<Record<string, unknown>> {
+  const shown = await proc("git", ["-C", root, "show", `${commit}:${lockFile}`]);
+  // No approvals file at that commit. One that is not valid JSON counts as no approvals, so every approval it replaced shows as changed.
+  if (shown.code !== 0) return {};
+  try {
+    return (JSON.parse(shown.stdout) as { flows?: Record<string, unknown> }).flows ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /**
