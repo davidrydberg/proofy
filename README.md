@@ -58,8 +58,13 @@ guest-checkout  passed
 Exit codes: 0 pass, 1 an approved flow failed, 2 usage or config, 3 the sandbox failed, 4 not approved.
 `examples/woocommerce` is a complete shop with two flows, and [pull request 1](https://github.com/davidrydberg/proofy/pull/1) shows a report posted with `--post`.
 
-The agent instructions say only you run `proofy approve`.
-That is a rule your agent follows, not a lock.
+An approval covers the flow's requirements, test and fakes, `e2e/proofy.json` and the compose files it lists.
+A change to any of them makes the flow out of date until you approve it again, and `proofy` and the run report say what changed.
+
+Only you run `proofy approve`: it works only in an interactive terminal and asks you to type the flow name.
+That stops an agent that follows its instructions, not a determined one with shell access, which can fake a terminal or write `e2e/proofy.lock.json` itself.
+So `proofy run --pr` lists every flow whose approval changed in the pull request, and you check each one in review.
+For a stronger gate, add a CODEOWNERS entry for `e2e/proofy.lock.json`.
 
 ## License
 

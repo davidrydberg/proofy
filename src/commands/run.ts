@@ -1,12 +1,13 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { parseArgs } from "../args.js";
 import { loadConfig } from "../config.js";
 import type { Deps } from "../deps.js";
 import { CliError } from "../errors.js";
-import { exportPullRequest, postReport, pullRequest, type PullRequest } from "../github.js";
+import { changedApprovals, exportPullRequest, postReport, pullRequest, type PullRequest } from "../github.js";
 import { renderRun, type Hint } from "../human.js";
 import { exists, flowNames, gitRoot, pathsFor, type Paths } from "../project.js";
+import { approvalsFile } from "../run/approvals.js";
 import { planFlows, sealedRun, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
 import { EXIT_FOR, verdict } from "../run/report.js";
@@ -54,7 +55,8 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
     await exportPullRequest(deps.proc, top, pr, dir);
     source = pathsFor(join(dir, relative(top, root)));
     if (await exists(source.config)) config = await loadConfig(source.config, `e2e/proofy.json in PR #${pr.number}`);
-    sourceInfo = { commit: pr.sha, pr: pr.number };
+    const approvalsChanged = await changedApprovals(deps.proc, top, pr, relative(top, approvalsFile(paths)).split(sep).join("/"));
+    sourceInfo = { commit: pr.sha, pr: pr.number, ...(approvalsChanged.length > 0 ? { approvalsChanged } : {}) };
   } else {
     sourceInfo = await workingTreeInfo(deps, root);
   }
@@ -116,7 +118,9 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
   const hints: Hint[] = [];
   if (result === "environment") hints.push([`Read ${relative}/sandbox.log and fix the sandbox setup; this run says nothing about the app`, ""]);
   if (failed.length > 0) hints.push([`Read ${relative}/report.md: decide per red requirement whether the app, the test, a fake or the requirement is wrong (e2e/AGENTS.md)`, ""]);
-  const untrusted = report.flows.filter((flow) => !flow.approved).map((flow) => flow.name);
+  const approvalsChanged = report.source.approvalsChanged ?? [];
+  if (approvalsChanged.length > 0) hints.push([`Approval changed in this PR: ${approvalsChanged.join(", ")}. Only a person approves: check in review that each change to e2e/proofy.lock.json is theirs`, ""]);
+  const untrusted = report.flows.filter((flow) => !flow.approved).map((flow) => (flow.changed ? `${flow.name} (changed since approval: ${flow.changed.join(", ")})` : flow.name));
   if (untrusted.length > 0 && result !== "environment") hints.push([`Not approved: ${untrusted.join(", ")}. Run \`proofy\` to see whether they are ready for the human to approve`, ""]);
   hints.push([`proofy report ${report.id}`, "show this run again"]);
   const data: Record<string, unknown> = {
@@ -125,6 +129,7 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
     report: `${relative}/report.md`,
     flows: report.flows.map((flow) => ({ flow: flow.name, approved: flow.approved ? "yes" : "no", status: flow.status, failed: flow.requirements.filter((r) => r.result === "fail" || r.result === "not-reached").length })),
   };
+  if (approvalsChanged.length > 0) data.approvals_changed_in_pr = approvalsChanged;
   if (report.environmentError) data.environment_error = report.environmentError.split("\n")[0];
   if (failed.length > 0) data.failed = failed;
   const refused = report.outside.filter((call) => call.handledAs === "refused");
