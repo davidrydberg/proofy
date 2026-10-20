@@ -11,7 +11,14 @@
   }
   * { box-sizing: border-box; margin: 0; }
   body { width: 960px; height: 540px; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/23px var(--mono); }
-  #stage { position: relative; width: 960px; height: 540px; display: flex; flex-direction: column; padding: 14px 0 10px; }
+  #stage { position: relative; width: 960px; height: 540px; display: flex; flex-direction: column; }
+  #tabs { flex: none; height: 30px; display: flex; background: #1a1c2a; font-size: 13px; color: var(--dim); }
+  #tabs div { padding: 0 22px; line-height: 30px; border-right: 1px solid #2d3046; }
+  #tabs .on { background: var(--bg); color: var(--text); }
+  #claude { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 14px 0 10px; }
+  #shell { flex: 1; min-height: 0; padding: 14px 18px; display: none; }
+  .h2 { color: var(--blue); font-weight: 700; } .h3 { color: var(--blue); font-weight: 700; }
+  .tb { color: var(--dim); }
 
   #head { display: flex; align-items: center; gap: 16px; padding: 0 18px; flex: none; }
   #head svg { width: 60px; height: 40px; }
@@ -43,6 +50,8 @@
 </head>
 <body>
 <div id="stage">
+  <div id="tabs"><div id="tab1" class="on">claude</div><div id="tab2">glow</div></div>
+  <div id="claude">
   <div id="head">
     <svg viewBox="0 0 118 78" shape-rendering="crispEdges" fill="#d97757">
       <rect x="14" y="0" width="90" height="62"/><rect x="0" y="32" width="118" height="14"/>
@@ -55,18 +64,20 @@
   <div id="hist"><div id="inner"></div></div>
   <div id="input"><span id="prefix">❯ </span><span id="typed"></span><span id="cursor"></span></div>
   <div id="foot"><div id="model">Sonnet 5.5</div><div id="mode"><b>⏵⏵ auto mode on</b> (shift+tab to cycle)</div></div>
+  </div>
+  <div id="shell"></div>
 </div>
 
 <script>
-const DURATION = 33;
+const DURATION = 41;
 const OK = "✓", BULLET = "●", ELBOW = "⎿";
 
 // What the person types into the prompt box; it lands in the history at `send`.
 const TYPING = [
   { from: 0.8, to: 3.6, send: 4.2, mode: "prompt", text: "add a proofy test: a guest can buy a product and gets an email" },
   { from: 13.4, to: 14.2, send: 14.6, mode: "bash", text: "proofy report" },
-  { from: 19.4, to: 20.6, send: 21.0, mode: "bash", text: "proofy approve guest-checkout" },
-  { from: 23.4, to: 24.8, send: 25.2, mode: "prompt", text: "check every approved flow on PR 42" },
+  { from: 27.4, to: 28.6, send: 29.0, mode: "bash", text: "proofy approve guest-checkout" },
+  { from: 31.4, to: 32.8, send: 33.2, mode: "prompt", text: "check every approved flow on PR 42" },
 ];
 
 const tool = (name, arg) => `<span class="g">${BULLET}</span> <span class="bold">${name}</span>(${arg})`;
@@ -92,14 +103,32 @@ const HISTORY = [
   { at: 15.5, html: more(`<span class="g">${OK}</span> R1  stored as "processing"`) },
   { at: 16.0, html: more(`<span class="g">${OK}</span> R2  1 email to guest@example.com`) },
   { at: 16.5, html: more(`<span class="g">${OK}</span> R3  no other mail`) },
-  { at: 17.0, html: more(`<span class="dim">Screenshots: e2e/out/20261020-091200/report.md</span>`) },
-  { at: 21.0, cls: "bang", html: `! ${TYPING[2].text}` },
-  { at: 21.6, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
-  { at: 25.2, cls: "user", html: TYPING[3].text },
-  { at: 25.4, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
-  { at: 25.5, until: 27.8, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
-  { at: 27.8, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
-  { at: 28.6, cls: "gap", html: say(`All requirements held. The report is posted on PR 42.`) },
+  { at: 17.0, html: more(`<span class="dim">Full report: e2e/out/20261020-091200/report.md</span>`) },
+  { at: 29.0, cls: "bang", html: `! ${TYPING[2].text}` },
+  { at: 29.6, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
+  { at: 33.2, cls: "user", html: TYPING[3].text },
+  { at: 33.4, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
+  { at: 33.5, until: 35.8, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
+  { at: 35.8, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
+  { at: 36.6, cls: "gap", html: say(`All requirements held. The report is posted on PR 42.`) },
+];
+
+// A second terminal tab where the person opens the report with a markdown viewer, then closes it.
+const TAB = { open: 18.2, close: 26.0 };
+const GLOW = { from: 18.8, to: 20.2, text: "glow e2e/out/20261020-091200/report.md" };
+const cell = (text, width) => text.padEnd(width);
+const row = (...cells) => ` ${cell(cells[0], 4)}<span class="tb">│</span> ${cell(cells[1], 7)}<span class="tb">│</span> ${cell(cells[2], 29)}<span class="tb">│</span> ${cells[3]}`;
+const REPORT = [
+  { at: 20.6, html: `<span class="h2">## proofy: <span class="y">NOT TRUSTED</span>: some flows are not approved yet</span>` },
+  { at: 20.7, html: `Run 20261020-091200 (dev). Sealed: the app had no way out.`, cls: "gap" },
+  { at: 20.8, html: `<span class="h3">### guest-checkout</span>`, cls: "gap" },
+  { at: 20.9, html: row("Req", "Result", "Expected", "Actual"), cls: "gap" },
+  { at: 20.9, html: `<span class="tb">─────┼────────┼──────────────────────────────┼──────────────────────────────</span>` },
+  { at: 21.0, html: row("R1", `<span class="g">pass</span>   `, `"processing"`, `"processing"`) },
+  { at: 21.1, html: row("R2", `<span class="g">pass</span>   `, "1 email to guest@example.com", "1 email to guest@example.com") },
+  { at: 21.2, html: row("R3", `<span class="g">pass</span>   `, "0 other mails", "0 other mails") },
+  { at: 21.4, html: `<span class="h3">### Outside calls</span>`, cls: "gap" },
+  { at: 21.5, html: ` api.shipping.example  fake  2 requests` , cls: "gap" },
 ];
 
 const SPINNER = ["·", "✢", "✳", "✶", "✻", "✽"];
@@ -116,6 +145,22 @@ const rows = HISTORY.map((entry) => {
 });
 
 function render(t) {
+  const tab = t >= TAB.open && t < TAB.close;
+  $("tab2").style.display = tab ? "" : "none";
+  $("tab2").className = tab ? "on" : "";
+  $("tab1").className = tab ? "" : "on";
+  $("claude").style.display = tab ? "none" : "";
+  $("shell").style.display = tab ? "block" : "none";
+  if (tab) {
+    const typed = GLOW.text.slice(0, Math.round(GLOW.text.length * clamp((t - GLOW.from) / (GLOW.to - GLOW.from))));
+    const done = t >= GLOW.to;
+    const blink = !done || Math.floor(t * 2) % 2 === 0;
+    const prompt = `<div class="l"><span class="bl">~/shop</span> <span class="g">❯</span> ${typed}${done ? "" : `<span id="cursor"></span>`}</div>`;
+    const shown = REPORT.filter((line) => t >= line.at).map((line) => `<div class="l ${line.cls ?? ""}">${line.html}</div>`).join("");
+    const next = t >= 22 ? `<div class="l gap"><span class="bl">~/shop</span> <span class="g">❯</span> ${blink ? `<span id="cursor"></span>` : ""}</div>` : "";
+    $("shell").innerHTML = prompt + (shown ? `<div class="gap">${shown}</div>` : "") + next;
+  }
+
   HISTORY.forEach((entry, i) => {
     const visible = t >= entry.at && (entry.until === undefined || t < entry.until);
     rows[i].style.display = visible ? "" : "none";
