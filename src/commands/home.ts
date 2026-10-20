@@ -11,6 +11,8 @@ import { verdict } from "../run/report.js";
 import type { CommandResult } from "./types.js";
 
 const SETUP_ASK = 'Ask your agent: "set up proofy". It follows the Setup section of e2e/AGENTS.md';
+export const ONBOARDING_ASK =
+  'Tell your agent what to test, in plain words: "add a proofy test: a guest can buy a product and gets a confirmation email". It finishes setup first if needed and comes back with a flow for you to approve';
 
 // Runs from session-start hooks: reads files only, never starts Docker, never exits non-zero.
 export async function homeCommand(deps: Deps): Promise<CommandResult | string> {
@@ -104,11 +106,11 @@ function nextSteps(checks: Check[], flows: FlowStatus[], orphans: string[]): Hin
   const steps: Hint[] = [];
   const named = (state: FlowStatus["state"]) => flows.filter((flow) => flow.state === state).map((flow) => flow.name);
   const missing = checks.filter((check) => !check.ok).map((check) => check.label);
-  if (missing.length > 0) {
-    steps.push([`Setup is missing: ${missing.join(", ")}. ${SETUP_ASK}`, ""]);
-  }
+  const gaps = missing.length > 0 ? `Setup is missing: ${missing.join(", ")}. ` : "";
   if (flows.length === 0) {
-    steps.push(['Tell your agent what to test, in plain words: "add a proofy test: a guest can buy a product and gets a confirmation email"', ""]);
+    steps.push([`${gaps}${ONBOARDING_ASK}`, ""]);
+  } else if (gaps) {
+    steps.push([`${gaps}${SETUP_ASK}`, ""]);
   }
   if (named("draft").length > 0) {
     steps.push([`Ask your agent to write the tests for: ${named("draft").join(", ")} (step 4 in e2e/AGENTS.md)`, ""]);

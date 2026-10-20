@@ -15,6 +15,13 @@ R4. Stock for the product goes down by one.
 R5. Leaving the payment step without paying creates no order.
 R6. The confirmation email goes to anyone but the guest.
 
+## Assumed
+
+What the request did not say, chosen by the agent. Correct any of these before approving.
+
+- The guest pays with the shop's bank transfer method, the only offline one enabled.
+- Shipping goes to an address in Sweden, so the total includes the 49.00 SEK flat rate.
+
 ## Not covered
 
 - Paying by card inside the provider's own card fields: the sandbox is sealed, so the provider's browser code cannot load.

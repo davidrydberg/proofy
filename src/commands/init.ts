@@ -7,6 +7,7 @@ import type { Deps } from "../deps.js";
 import { renderInit, type Hint } from "../human.js";
 import { COMPOSE_NAMES, detectCompose, detectEnv } from "../detect.js";
 import { exists, findRoot, pathsFor } from "../project.js";
+import { ONBOARDING_ASK } from "./home.js";
 import type { CommandResult } from "./types.js";
 
 export const INIT_HELP = `usage: proofy init [--no-agents-md]
@@ -18,7 +19,10 @@ examples:
 `;
 
 const TEMPLATES = fileURLToPath(new URL("../../templates/", import.meta.url));
-const POINTER = "End-to-end tests: read `e2e/AGENTS.md` before writing or changing anything under `e2e/`, and before changing a flow it covers.";
+const POINTER =
+  "End-to-end tests: read `e2e/AGENTS.md` before writing or changing anything under `e2e/`, and before changing a flow it covers. A request to add, change or set up a proofy test is the go-ahead to edit files under `e2e/`.";
+// Any earlier wording of the pointer counts as present, so init never adds a second one.
+const POINTER_MARK = "read `e2e/AGENTS.md`";
 const IGNORE = "e2e/out/";
 
 export async function initCommand(args: string[], deps: Deps): Promise<CommandResult> {
@@ -73,13 +77,12 @@ export async function initCommand(args: string[], deps: Deps): Promise<CommandRe
   let pointer = "skipped (--no-agents-md)";
   if (!flags.booleans.has("no-agents-md")) {
     const target = (await exists(join(root, "AGENTS.md"))) || !(await exists(join(root, "CLAUDE.md"))) ? "AGENTS.md" : "CLAUDE.md";
-    pointer = (await addLine(join(root, target), POINTER)) ? `added to ${target}` : `already in ${target}`;
+    pointer = (await addLine(join(root, target), POINTER, POINTER_MARK)) ? `added to ${target}` : `already in ${target}`;
     if (pointer.startsWith("added")) written.push(`${target} (pointer to e2e/AGENTS.md)`);
   }
 
   const hints: Hint[] = [
-    ['Next, ask your agent: "set up proofy". It reads e2e/AGENTS.md, checks the app starts in Docker and fills in the rest of e2e/proofy.json', ""],
-    ['Then tell it what to test, in plain words: "add a proofy test: a guest can buy a product"', ""],
+    [ONBOARDING_ASK, ""],
     ["proofy", "see setup progress and the next step at any time"],
   ];
   return {
@@ -99,15 +102,15 @@ async function initRoot(cwd: string): Promise<string> {
   return found;
 }
 
-/** Appends a line unless the file already has it. Returns whether it wrote. */
-async function addLine(file: string, line: string): Promise<boolean> {
+/** Appends a line unless the file already has it, or a line containing `mark`. Returns whether it wrote. */
+async function addLine(file: string, line: string, mark?: string): Promise<boolean> {
   let current = "";
   try {
     current = await readFile(file, "utf8");
   } catch {
     // A missing file is created.
   }
-  if (current.split(/\r?\n/).some((existing) => existing.trim() === line)) return false;
+  if (current.split(/\r?\n/).some((existing) => existing.trim() === line || (mark !== undefined && existing.includes(mark)))) return false;
   const separator = current === "" || current.endsWith("\n") ? "" : "\n";
   await appendFile(file, `${separator}${current === "" ? "" : "\n"}${line}\n`);
   return true;
