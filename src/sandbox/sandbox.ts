@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
-import { ADMIN_PORT, MAIL_USER, MOUNT, RUNNER, STANDIN } from "./contract.js";
-import { hostPaths, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
+import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
+import { hostPaths, PROXY_VARIABLES, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
 import { tail, type Proc } from "./docker.js";
 import { composeSources } from "./sources.js";
 
@@ -39,7 +39,10 @@ export interface Sandbox {
   notes: string[];
   /** The image reference each sealed compose service runs, by service name. */
   imageRefs: Record<string, string>;
-  /** The fake-service container's admin token and Mailpit's password, new for every sandbox. App services never see it. */
+  /**
+   * The fake-service container's admin token and Mailpit's password, new for every sandbox. App services never see it,
+   * and it is kept only in the sandbox's own folder, outside the repository: sandboxToken reads it back.
+   */
   token: string;
 }
 
@@ -66,7 +69,7 @@ const DOCKER_ENV = [
   "DOCKER_TLS_VERIFY",
   "DOCKER_BUILDKIT",
   "XDG_RUNTIME_DIR",
-  ...["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"].flatMap((name) => [name, name.toLowerCase()]),
+  ...PROXY_VARIABLES,
 ];
 
 function dockerVariable(name: string): boolean {
@@ -199,6 +202,16 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
   return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs, token };
 }
 
+/** The token of a sandbox prepared earlier, from its setup folder. Undefined for one prepared by a proofy without tokens. */
+export async function sandboxToken(sandbox: Pick<Sandbox, "workDir">): Promise<string | undefined> {
+  try {
+    const { token } = JSON.parse(await readFile(join(sandbox.workDir, "setup", "standin.json"), "utf8")) as { token?: unknown };
+    return typeof token === "string" && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The real path of a host path, symlinks resolved. Docker creates a missing bind mount source, so a path that does not
  * exist yet resolves through the folders above it that do, and a symlink to a missing path through where it points.
@@ -319,25 +332,24 @@ export async function resetFakes(proc: Proc, sandbox: Sandbox): Promise<void> {
   );
 }
 
-export async function saveLogs(proc: Proc, sandbox: Sandbox, dir: string): Promise<void> {
+export async function saveLogs(proc: Proc, sandbox: Pick<Sandbox, "project" | "composeFile">, dir: string): Promise<void> {
   const logs = await proc("docker", [...compose(sandbox), "logs", "--no-color", "--timestamps"]);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "sandbox.log"), logs.stdout + logs.stderr);
 }
 
-export async function stop(proc: Proc, sandbox: Sandbox): Promise<void> {
+export async function stop(proc: Proc, sandbox: Pick<Sandbox, "project" | "composeFile">): Promise<void> {
   await proc("docker", [...compose(sandbox), "down", "-v", "--remove-orphans", "--timeout", "5"], { timeoutMs: 120_000 });
 }
 
 export async function forwardedPorts(proc: Proc, sandbox: Sandbox): Promise<{ app?: string; mail?: string }> {
-  const port = async (inner: string, login = "") => {
+  const port = async (inner: string) => {
     const result = await proc("docker", [...compose(sandbox), "port", "proofy-forward", inner]);
     const match = /:(\d+)\s*$/.exec(result.stdout.trim());
-    return match ? `http://${login}127.0.0.1:${match[1]}` : undefined;
+    return match ? `http://127.0.0.1:${match[1]}` : undefined;
   };
   const app = await port("8080");
-  // Mailpit asks for its login; in the address, the browser sends it.
-  const mail = await port("8025", `${MAIL_USER}:${sandbox.token}@`);
+  const mail = await port("8025");
   return { ...(app ? { app } : {}), ...(mail ? { mail } : {}) };
 }
 

@@ -193,7 +193,7 @@ describe("sandbox compose", () => {
     ]);
   });
 
-  it("finds every use of a variable docker needs where it reaches the app, also with a default, since its value comes from the machine", () => {
+  it("finds every use of a variable docker needs where it reaches the app, also with a default, since its value comes from the machine, but a proxy in build args", () => {
     const raw = {
       services: {
         web: {
@@ -210,18 +210,21 @@ describe("sandbox compose", () => {
             BUILDER: "$${HOME} ${BUILDX_BUILDER:+set}",
           },
           volumes: ["${XDG_RUNTIME_DIR-/run}/app:/app"],
+          build: { context: ".", args: { HTTPS_PROXY: "${https_proxy}", HOME: "${HOME}", BUILDER: "${BUILDX_BUILDER:-}" } },
         },
       },
     };
     const model = { services: { web: {} } };
     const config = configSchema.parse({ compose: ["c.yml"], env: { web: { OVERRIDDEN: "x" } } });
-    const machine = (name: string) => ["PATH", "HOME", "DOCKER_HOST", "XDG_RUNTIME_DIR", "DOCKER_CONFIG", "https_proxy"].includes(name) || name.startsWith("BUILDX_");
+    const machine = (name: string) => ["PATH", "HOME", "DOCKER_HOST", "XDG_RUNTIME_DIR", "DOCKER_CONFIG", "https_proxy", "HTTPS_PROXY"].includes(name) || name.startsWith("BUILDX_");
     expect(unsetUses(raw, model, config, [], machine)).toEqual([
       { name: "HOME", path: ["services", "web", "environment", "DATA"] },
+      { name: "HOME", path: ["services", "web", "build", "args", "HOME"] },
       { name: "PATH", path: ["services", "web", "environment", "BIN"] },
       { name: "DOCKER_HOST", path: ["services", "web", "environment", "SOCK"] },
       { name: "https_proxy", path: ["services", "web", "environment", "PROXY"] },
       { name: "BUILDX_BUILDER", path: ["services", "web", "environment", "BUILDER"] },
+      { name: "BUILDX_BUILDER", path: ["services", "web", "build", "args", "BUILDER"] },
       { name: "XDG_RUNTIME_DIR", path: ["services", "web", "volumes", "0"] },
     ]);
   });

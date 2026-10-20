@@ -243,8 +243,11 @@ describe("dev test", () => {
     mkdirSync(join(work, "runner"), { recursive: true });
     mkdirSync(join(work, "out"), { recursive: true });
     mkdirSync(join(dir, "e2e/out"), { recursive: true });
-    const state = { project: "proofy-shop-dev", composeFile: join(work, "compose.yml"), workDir: work, notes: [], imageRefs: {}, startedAt: "", urls: {} };
-    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify({ ...state, token: "t0k3n" }));
+    mkdirSync(join(work, "setup"), { recursive: true });
+    const state = { project: "proofy-shop-dev", composeFile: join(work, "compose.yml"), workDir: work, notes: [], imageRefs: {}, startedAt: "", urls: { mail: "http://127.0.0.1:50025" } };
+    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify(state));
+    // The token stays in the sandbox's own folder, which the fake-service container reads its setup from.
+    writeFileSync(join(work, "setup", "standin.json"), JSON.stringify({ token: "t0k3n" }));
     const calls: Array<{ call: string; env?: NodeJS.ProcessEnv }> = [];
     const proc: Proc = async (program, args, options) => {
       calls.push({ call: `${program} ${args.join(" ")}`, ...(options?.env ? { env: options.env } : {}) });
@@ -256,8 +259,13 @@ describe("dev test", () => {
     expect(docker[1]!.call).toMatch(/wget .*--header Authorization: Bearer t0k3n --post-data {2}http:\/\/127\.0\.0\.1:8099\/reset$/);
     expect(docker.every(({ env }) => env !== undefined && env.NO_COLOR === undefined && env.XDG_CACHE_HOME === undefined)).toBe(true);
 
+    // dev up prints Mailpit's address with its login; the state file in the repository holds no token.
+    expect((await cli(["dev", "up"], dir, proc)).out).toContain("http://proofy:t0k3n@127.0.0.1:50025");
+    expect(readFileSync(join(dir, "e2e/out/dev.json"), "utf8")).not.toContain("t0k3n");
+
     // A dev sandbox started before sandboxes had a token is restarted, not tested.
-    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify(state));
+    writeFileSync(join(work, "setup", "standin.json"), JSON.stringify({ hosts: [] }));
+    expect((await cli(["dev", "up"], dir, proc)).out).toContain("http://127.0.0.1:50025");
     const old = await cli(["dev", "test", "checkout"], dir, proc);
     expect(old.code).toBe(2);
     expect(old.out).toContain("The dev sandbox was started by an older proofy");
