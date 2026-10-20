@@ -8,6 +8,8 @@ export const FORWARD = "proofy-forward";
 export const ADMIN_PORT = 8099;
 export const MAILPIT_API = `http://${MAILPIT}:8025`;
 export const STANDIN_ADMIN = `http://${STANDIN}:${ADMIN_PORT}`;
+/** Mailpit's login for its API and web view; the password is the sandbox token. */
+export const MAIL_USER = "proofy";
 
 /** Mount points inside containers. */
 export const MOUNT = {

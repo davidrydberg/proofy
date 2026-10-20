@@ -57,7 +57,7 @@ describe("sealed sandbox on Docker", () => {
     expect(requests).not.toContain("sk_sandbox");
 
     expect((await cli(["dev", "up"], dir)).code).toBe(0);
-    const state = JSON.parse(readFileSync(join(dir, "e2e/out/dev.json"), "utf8")) as { project: string; composeFile: string };
+    const state = JSON.parse(readFileSync(join(dir, "e2e/out/dev.json"), "utf8")) as { project: string; composeFile: string; token: string; urls: { mail: string } };
     const inside = (service: string, ...command: string[]) =>
       execFileSync("docker", ["compose", "-p", state.project, "-f", state.composeFile, "exec", "-T", service, ...command], { env: { PATH: process.env.PATH, HOME: process.env.HOME } }).toString().trim();
     try {
@@ -65,11 +65,21 @@ describe("sealed sandbox on Docker", () => {
       expect(inside("shop", "printenv", "SHOP_MODE")).toBe("sandbox");
       expect(inside("shop", "cat", "/run/secrets/shop_key")).toBe("sk_sandbox_file");
       expect(inside("shop", "cat", "/app/settings.txt")).toBe("currency=SEK");
+      // The app can neither read nor erase the evidence: the fake-service container's admin port and Mailpit's API ask for the token.
+      for (const url of ["http://proofy-standin:8099/requests", "http://mailpit:8025/api/v1/messages"]) {
+        expect(inside("shop", "sh", "-c", `wget -q -O - ${url} 2>&1 || true`)).toContain("401");
+      }
+      expect(inside("shop", "printenv")).not.toContain(state.token);
+      // The person opens Mailpit with the login in the address dev up prints.
+      const mailUrl = new URL(state.urls.mail);
+      expect(`${mailUrl.username}:${mailUrl.password}`).toBe(`proofy:${state.token}`);
+      expect((await fetch(`${mailUrl.origin}/api/v1/messages`)).status).toBe(401);
+      expect((await fetch(`${mailUrl.origin}/api/v1/messages`, { headers: { authorization: `Basic ${btoa(`proofy:${state.token}`)}` } })).status).toBe(200);
       // Each dev test starts the fakes afresh, so the fake-service container holds only the last test's calls.
       const calls: string[] = [];
       for (let i = 0; i < 2; i++) {
         expect((await cli(["dev", "test"], dir)).code).toBe(4);
-        calls.push(inside("proofy-standin", "wget", "-q", "-O", "-", "http://127.0.0.1:8099/requests?host=api.payments.test"));
+        calls.push(inside("proofy-standin", "wget", "-q", "-O", "-", "--header", `Authorization: Bearer ${state.token}`, "http://127.0.0.1:8099/requests?host=api.payments.test"));
       }
       expect((JSON.parse(calls[1]!) as unknown[]).length).toBe((JSON.parse(calls[0]!) as unknown[]).length);
       const status = await cli([], dir);

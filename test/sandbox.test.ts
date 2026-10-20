@@ -23,7 +23,7 @@ function options(dir: string, config: Record<string, unknown>): SandboxOptions {
 function sandbox(dir: string): Sandbox {
   mkdirSync(join(dir, "runner", "exec"), { recursive: true });
   mkdirSync(join(dir, "out"), { recursive: true });
-  return { project: "proofy-shop-run-1", composeFile: join(dir, "compose.yml"), workDir: dir, notes: [], imageRefs: {} };
+  return { project: "proofy-shop-run-1", composeFile: join(dir, "compose.yml"), workDir: dir, notes: [], imageRefs: {}, token: "t0k3n" };
 }
 
 const ok = (stdout = "") => ({ code: 0, stdout, stderr: "", timedOut: false });
@@ -69,6 +69,11 @@ describe("sandbox", () => {
     const prepared = await prepare(proc, options(dir, {}));
     expect(prepared.imageRefs).toMatchObject({ web: "proofy-shop-run-1-web", db: "mariadb:11", mailpit: expect.stringMatching(/^axllent\/mailpit:/) });
     expect(Object.keys(prepared.imageRefs)).toEqual(["web", "db", "proofy-standin", "mailpit", "proofy-runner"]);
+    // A new token per sandbox, for the fake-service container's admin port, which resets only in a dev sandbox.
+    expect(prepared.token).toMatch(/^[0-9a-f]{32}$/);
+    expect(JSON.parse(readFileSync(join(prepared.workDir, "setup", "standin.json"), "utf8"))).toMatchObject({ token: prepared.token, dev: false });
+    expect((await prepare(proc, { ...options(dir, {}), mode: "dev" })).token).not.toBe(prepared.token);
+    expect(JSON.parse(readFileSync(join(prepared.workDir, "setup", "standin.json"), "utf8"))).toMatchObject({ dev: true });
 
     const inspected: Record<string, unknown> = {
       "proofy-shop-run-1-web": { Id: "sha256:aaa", RepoDigests: [] },
@@ -92,9 +97,11 @@ describe("sandbox", () => {
       seen.push(opts?.env);
       return ok();
     };
-    const shell = { PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock", STRIPE_KEY: "sk_live_x", COMPOSE_PROFILES: "all", SSH_AUTH_SOCK: "/agent" };
+    const builder = { DOCKER_BUILDKIT: "1", BUILDX_BUILDER: "remote", BUILDX_CONFIG: "/home/me/.buildx" };
+    const proxy = { HTTP_PROXY: "http://proxy:3128", HTTPS_PROXY: "http://proxy:3128", NO_PROXY: "localhost", ALL_PROXY: "socks5://proxy:1080", http_proxy: "http://p:1", https_proxy: "http://p:1", no_proxy: "local", all_proxy: "socks5://p:2" };
+    const shell = { PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock", STRIPE_KEY: "sk_live_x", COMPOSE_PROFILES: "all", SSH_AUTH_SOCK: "/agent", FTP_PROXY: "ftp://p", MY_BUILDX_KEY: "k", ...builder, ...proxy };
     await sandboxProc(proc, shell)("docker", ["compose", "config"], { timeoutMs: 5 });
-    expect(seen).toEqual([{ PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock" }]);
+    expect(seen).toEqual([{ PATH: "/bin", HOME: "/home/me", DOCKER_HOST: "unix:///d.sock", ...builder, ...proxy }]);
   });
 
   it("refuses a compose variable without a value where it reaches the app, and names where to set it", async () => {
@@ -128,6 +135,35 @@ describe("sandbox", () => {
     });
     // A compose version that words the warning otherwise refuses nothing more: STRIPE_KEY stays blank.
     await expect(prepare(proc('level=warning msg="STRIPE_KEY is unset, using an empty string"'), options(dir, { env: { web: { DATA: "/data" } } }))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+
+    // The proxy and builder variables docker keeps come from the machine too.
+    const builder = { services: { web: { image: "shop:${BUILDX_BUILDER:-default}", environment: { PROXY: "${HTTPS_PROXY:-}" } } } };
+    const machine: Proc = async (_program, args) => ok(JSON.stringify(args.includes("--no-interpolate") ? builder : model));
+    await expect(prepare(machine, options(dir, {}))).rejects.toMatchObject({
+      message: "The compose files use variables that have no fixed value in the sandbox: ${BUILDX_BUILDER} in services.web.image, ${HTTPS_PROXY} in services.web.environment.PROXY",
+      suggestions: [expect.any(String), expect.stringMatching(/^Replace \$\{BUILDX_BUILDER\} with a fixed value in the compose file: docker needs BUILDX_BUILDER/), "Set PROXY for service web in e2e/proofy.json env"],
+    });
+  });
+
+  it("refuses a bind mount, secret or config that is or will be created through a symlink pointing outside the repository", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-binds-"));
+    const outside = mkdtempSync(join(tmpdir(), "proofy-outside-"));
+    writeFileSync(join(outside, "id_ed25519"), "key");
+    writeFileSync(join(dir, "key.txt"), "sk_sandbox");
+    symlinkSync(outside, join(dir, "home"));
+    symlinkSync(join(outside, "id_ed25519"), join(dir, "key-link"));
+    symlinkSync(join(outside, "not-yet"), join(dir, "dangling"));
+    const proc = (model: Record<string, unknown>): Proc => async () => ok(JSON.stringify(model));
+    const bind = (source: string) => ({ services: { web: { image: "shop", volumes: [{ type: "bind", source, target: "/data" }] } } });
+    // A folder docker will create inside the repository is fine; one it would create through a symlink is not.
+    await expect(prepare(proc(bind(join(dir, "data", "db"))), options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+    for (const source of [join(dir, "home"), join(dir, "home", "new", "folder"), join(dir, "dangling"), join(dir, "dangling", "inner")]) {
+      await expect(prepare(proc(bind(source)), options(dir, {})), source).rejects.toThrow(`sets a bind mount of ${source}, which would give it host files outside the repository`);
+    }
+    const web = { image: "shop", secrets: [{ source: "key" }] };
+    await expect(prepare(proc({ services: { web }, secrets: { key: { file: join(dir, "key.txt") } } }), options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
+    await expect(prepare(proc({ services: { web }, secrets: { key: { file: join(dir, "key-link") } } }), options(dir, {}))).rejects.toThrow(/secrets.key mounts .*key-link, which would give a service host files outside the repository/);
+    await expect(prepare(proc({ services: { web }, configs: { site: { file: join(dir, "home", "id_ed25519") } } }), options(dir, {}))).rejects.toThrow(/configs.site mounts/);
   });
 
   it("refuses a build context that is a symlink inside the repository pointing outside it", async () => {

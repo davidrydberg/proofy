@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test as base, type Page, type TestInfo } from "@playwright/test";
-import { MAILPIT_API, MOUNT, STANDIN_ADMIN } from "../sandbox/contract.js";
+import { MAIL_USER, MAILPIT_API, MOUNT, STANDIN_ADMIN } from "../sandbox/contract.js";
 import { asJson, sameJson } from "./compare.js";
 
 export { expect } from "@playwright/test";
@@ -68,6 +68,12 @@ interface Current {
 }
 
 let current: Current | undefined;
+
+// The sandbox token, in the runner's environment only: Mailpit and the fake-service container's admin port answer
+// nobody else, so the app cannot erase the evidence before a test reads it.
+const TOKEN = process.env.PROOFY_TOKEN ?? "";
+const MAIL_LOGIN = `Basic ${Buffer.from(`${MAIL_USER}:${TOKEN}`).toString("base64")}`;
+const ADMIN_LOGIN = `Bearer ${TOKEN}`;
 
 export const test = base.extend<{ proofy: void }>({
   proofy: [
@@ -187,7 +193,7 @@ async function searchMail(query: string, options: MailOptions): Promise<Mail[]> 
   const atLeast = options.atLeast ?? 1;
   const deadline = Date.now() + (options.timeoutMs ?? 15_000);
   const ids = async () => {
-    const search = (await getJson(`${MAILPIT_API}/api/v1/search?query=${encodeURIComponent(query)}`)) as { messages?: Array<{ ID: string }> };
+    const search = (await getJson(`${MAILPIT_API}/api/v1/search?query=${encodeURIComponent(query)}`, MAIL_LOGIN)) as { messages?: Array<{ ID: string }> };
     return (search.messages ?? []).map((message) => message.ID);
   };
   let found = await ids();
@@ -206,7 +212,7 @@ async function searchMail(query: string, options: MailOptions): Promise<Mail[]> 
       }
     }
   }
-  const messages = await Promise.all(found.map((id) => getJson(`${MAILPIT_API}/api/v1/message/${id}`)));
+  const messages = await Promise.all(found.map((id) => getJson(`${MAILPIT_API}/api/v1/message/${id}`, MAIL_LOGIN)));
   return messages.map(toMail).reverse();
 }
 
@@ -221,7 +227,7 @@ export const standin = {
     const atLeast = options.atLeast ?? 0;
     const deadline = Date.now() + (options.timeoutMs ?? 15_000);
     for (;;) {
-      const requests = (await getJson(`${STANDIN_ADMIN}/requests?host=${encodeURIComponent(host)}`)) as RecordedRequest[];
+      const requests = (await getJson(`${STANDIN_ADMIN}/requests?host=${encodeURIComponent(host)}`, ADMIN_LOGIN)) as RecordedRequest[];
       if (requests.length >= atLeast || Date.now() > deadline) return requests;
       await sleep(250);
     }
@@ -243,8 +249,8 @@ function write(state: Current, entry: Entry): void {
   appendFileSync(join(flowDir(state), "claims.jsonl"), `${JSON.stringify(entry)}\n`);
 }
 
-async function getJson(url: string): Promise<unknown> {
-  const response = await fetch(url);
+async function getJson(url: string, authorization: string): Promise<unknown> {
+  const response = await fetch(url, { headers: { authorization } });
   if (!response.ok) throw new Error(`${url} answered ${response.status}`);
   return response.json();
 }

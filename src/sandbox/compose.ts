@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
-import { FORWARD, MAILPIT, MAILPIT_IMAGE, MOUNT, RUNNER, STANDIN } from "./contract.js";
+import { FORWARD, MAIL_USER, MAILPIT, MAILPIT_IMAGE, MOUNT, RUNNER, STANDIN } from "./contract.js";
 
 export type Mode = "run" | "dev";
 
@@ -14,10 +14,12 @@ export interface ComposeInputs {
   standinIp: string;
   standinImage: string;
   runnerImage: string;
-  /** The repository's top folder the compose files come from: an image build may read host files only inside it. */
+  /** The repository's top folder the compose files come from: a build context, bind mount, secret or config may read host files only inside it. */
   repoDir: string;
-  /** The real path, symlinks resolved, of repoDir and of every existing path localContexts returns. A path missing here is compared as written. */
+  /** The real path, symlinks resolved, of repoDir and of every path hostPaths returns. A path missing here is compared as written. */
   realPaths: Record<string, string>;
+  /** The sandbox's admin secret: the fake-service container's admin token and Mailpit's password. Only the host, the runner and those two know it. */
+  token: string;
   /** "uid:gid" of the person running proofy, so files written into mounted folders stay theirs on Linux. */
   user: string;
   dirs: { pkg: string; ca: string; runSetup: string; out: string; e2e: string; work: string; nodeModules: string };
@@ -83,6 +85,11 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
           `Remove ${kind}.${name} from the compose file proofy uses`,
         ]);
       }
+      if (typeof entry.file === "string" && outsideRepo(resolve(inputs.repoDir, entry.file), inputs.repoDir, inputs.realPaths)) {
+        throw new CliError(`${kind}.${name} mounts ${entry.file}, which would give a service host files outside the repository`, "CONFIG_INVALID", [
+          `Point ${kind}.${name} at a file inside the repository in the compose file proofy uses`,
+        ]);
+      }
     }
     if (Object.keys(entries).length > 0) files[kind] = entries;
   }
@@ -129,7 +136,12 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     networks: { proofy: { ipv4_address: inputs.standinIp } },
     healthcheck: { test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8099/health"], interval: "1s", timeout: "2s", retries: 60 },
   };
-  services[MAILPIT] = { image: MAILPIT_IMAGE, networks: { proofy: {} }, environment: { MP_SMTP_AUTH_ACCEPT_ANY: "1", MP_SMTP_AUTH_ALLOW_INSECURE: "1" } };
+  // The app sends mail over SMTP without a login; reading or deleting it through the API needs the token.
+  services[MAILPIT] = {
+    image: MAILPIT_IMAGE,
+    networks: { proofy: {} },
+    environment: { MP_SMTP_AUTH_ACCEPT_ANY: "1", MP_SMTP_AUTH_ALLOW_INSECURE: "1", MP_UI_AUTH: `${MAIL_USER}:${inputs.token}` },
+  };
   services[RUNNER] = {
     image: inputs.runnerImage,
     user: inputs.user,
@@ -138,7 +150,7 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     shm_size: "1gb",
     dns: [inputs.standinIp],
     networks: { proofy: {} },
-    environment: { CI: "1", HOME: "/tmp", PROOFY_BASE_URL: literal(baseUrl(config)), PROOFY_START_MS: String(config.limits.startMinutes * 60_000) },
+    environment: { CI: "1", HOME: "/tmp", PROOFY_BASE_URL: literal(baseUrl(config)), PROOFY_START_MS: String(config.limits.startMinutes * 60_000), PROOFY_TOKEN: inputs.token },
     volumes: [
       bind(dirs.work, MOUNT.work, false),
       bind(dirs.pkg, MOUNT.pkg, true),
@@ -179,28 +191,30 @@ export interface UnsetUse {
 
 // Service settings proofy drops, so a variable used only there needs no value.
 const DROPPED = new Set(["ports", "container_name", "env_file"]);
+// A variable use: ${NAME}, ${NAME:-default} and the other braced forms, or $NAME.
+const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)([}:?+-])|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 /**
  * Where the compose files use a variable that has no fixed value in the sandbox, leaving out uses that never reach it: a
  * setting proofy drops or replaces, an e2e/proofy.json env value that overrides it, or a service, volume, secret or
  * config the app does not use. `raw` is the model before interpolation, `model` after. `unset` are the variables
- * compose left blank: one found nowhere is returned with an empty path, so it is never silently blank. `machine` are
- * the variables docker itself needs, whose value comes from the machine running proofy, so any use counts, also one
- * with a default.
+ * compose left blank: one found nowhere is returned with an empty path, so it is never silently blank. `machine` tells
+ * whether a variable is one docker itself needs, whose value comes from the machine running proofy, so any use counts,
+ * also one with a default.
  */
-export function unsetUses(raw: Record<string, unknown>, model: Record<string, unknown>, config: Config, unset: string[], machine: string[] = []): UnsetUse[] {
-  const patterns = new Map<string, RegExp>([
-    ...unset.map((name): [string, RegExp] => [name, new RegExp(`\\$\\{${name}\\}|\\$${name}(?![A-Za-z0-9_])`)]),
-    ...machine.map((name): [string, RegExp] => [name, new RegExp(`\\$\\{${name}[}:?+-]|\\$${name}(?![A-Za-z0-9_])`)]),
-  ]);
-  const found = new Map<string, UnsetUse[]>([...patterns.keys()].map((name) => [name, []]));
+export function unsetUses(raw: Record<string, unknown>, model: Record<string, unknown>, config: Config, unset: string[], machine: (name: string) => boolean = () => false): UnsetUse[] {
+  const found = new Map<string, UnsetUse[]>(unset.map((name) => [name, []]));
   const visit = (value: unknown, path: string[]) => {
     if (typeof value === "string") {
       // $$ is a literal dollar sign, never a variable.
       const text = value.replace(/\$\$/g, "");
-      for (const [name, pattern] of patterns) {
-        if (pattern.test(text)) found.get(name)?.push({ name, path: settingPath(path, value) });
+      const names = new Set<string>();
+      for (const [, braced, after, bare] of text.matchAll(VARIABLE)) {
+        const name = braced ?? bare ?? "";
+        // Compose leaves a variable blank only where it has no default; a machine variable counts in every form.
+        if (machine(name) || (unset.includes(name) && (bare !== undefined || after === "}"))) names.add(name);
       }
+      for (const name of names) found.set(name, [...(found.get(name) ?? []), { name, path: settingPath(path, value) }]);
     } else if (Array.isArray(value)) {
       value.forEach((item, index) => visit(item, [...path, String(index)]));
     } else if (value && typeof value === "object") {
@@ -216,7 +230,7 @@ export function unsetUses(raw: Record<string, unknown>, model: Record<string, un
     if (DROPPED.has(setting)) return false;
     return !(setting === "environment" && config.env[entry]?.[key] !== undefined);
   };
-  return [...found].flatMap(([name, uses]) => (uses.length === 0 ? (unset.includes(name) ? [{ name, path: [] }] : []) : uses.filter(reaches)));
+  return [...found].flatMap(([name, uses]) => (uses.length === 0 ? [{ name, path: [] }] : uses.filter(reaches)));
 }
 
 // An environment entry in list form, "KEY=value", is named by its key like the map form.
@@ -259,20 +273,33 @@ function sealBreach(service: Service, repoDir: string, realPaths: Record<string,
   if (build.privileged === true) return { setting: "build.privileged", why: "give the image build the host's devices and network controls" };
   if (Array.isArray(build.entitlements) && build.entitlements.length > 0) return { setting: "build.entitlements", why: "give the image build powers beyond the sandbox's" };
   for (const { setting, value, path } of contextsOf(service, repoDir)) {
-    const real = realPaths[path];
-    if (!(real === undefined ? inside(repoDir, path) : inside(realPaths[repoDir] ?? repoDir, real))) return { setting: `${setting} ${value}`, why: "give the image build host files outside the repository" };
+    if (outsideRepo(path, repoDir, realPaths)) return { setting: `${setting} ${value}`, why: "give the image build host files outside the repository" };
   }
-  for (const volume of (service.volumes ?? []) as unknown[]) {
-    if (!volume || typeof volume !== "object") continue;
-    const { type, source } = volume as { type?: unknown; source?: unknown };
-    if (type === "bind" && typeof source === "string" && exposesSocket(source)) return { setting: `a bind mount of ${source}`, why: "let it control Docker on the host" };
+  for (const source of bindSources(service)) {
+    if (exposesSocket(source)) return { setting: `a bind mount of ${source}`, why: "let it control Docker on the host" };
+    if (outsideRepo(resolve(repoDir, source), repoDir, realPaths)) return { setting: `a bind mount of ${source}`, why: "give it host files outside the repository" };
   }
   return undefined;
 }
 
-/** The host folder of every local build context in the model: what prepare resolves symlinks of before sealBreach compares them. */
-export function localContexts(model: Record<string, unknown>, repoDir: string): string[] {
-  return Object.values((model.services ?? {}) as Record<string, Service>).flatMap((service) => contextsOf(service, repoDir).map(({ path }) => path));
+/**
+ * Every host path the model reads: local build contexts, bind mount sources, and secret and config files. prepare
+ * resolves their symlinks before sandboxCompose compares them with the repository.
+ */
+export function hostPaths(model: Record<string, unknown>, repoDir: string): string[] {
+  const services = Object.values((model.services ?? {}) as Record<string, Service>);
+  const files = (["secrets", "configs"] as const).flatMap((kind) => Object.values((model[kind] ?? {}) as Record<string, { file?: unknown }>));
+  return [
+    ...services.flatMap((service) => [...contextsOf(service, repoDir).map(({ path }) => path), ...bindSources(service).map((source) => resolve(repoDir, source))]),
+    ...files.flatMap(({ file }) => (typeof file === "string" ? [resolve(repoDir, file)] : [])),
+  ];
+}
+
+function bindSources(service: Service): string[] {
+  return ((service.volumes ?? []) as unknown[]).flatMap((volume) => {
+    const { type, source } = (volume && typeof volume === "object" ? volume : {}) as { type?: unknown; source?: unknown };
+    return type === "bind" && typeof source === "string" ? [source] : [];
+  });
 }
 
 function contextsOf(service: Service, repoDir: string): Array<{ setting: string; value: string; path: string }> {
@@ -295,6 +322,12 @@ function hostPath(context: string, repoDir: string): string | undefined {
   const layout = /^oci-layout:\/\/(.*?)(@[^/]*)?$/.exec(context);
   if (layout) return resolve(repoDir, layout[1] ?? "");
   return REMOTE.test(context) ? undefined : resolve(repoDir, context);
+}
+
+/** Whether a host path lies outside the repository, by real paths where prepare resolved them, so a symlink cannot point out of it. */
+function outsideRepo(path: string, repoDir: string, realPaths: Record<string, string>): boolean {
+  const real = realPaths[path];
+  return !(real === undefined ? inside(repoDir, path) : inside(realPaths[repoDir] ?? repoDir, real));
 }
 
 function inside(dir: string, path: string): boolean {
