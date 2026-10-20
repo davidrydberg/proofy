@@ -243,7 +243,8 @@ describe("dev test", () => {
     mkdirSync(join(work, "runner"), { recursive: true });
     mkdirSync(join(work, "out"), { recursive: true });
     mkdirSync(join(dir, "e2e/out"), { recursive: true });
-    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify({ project: "proofy-shop-dev", composeFile: join(work, "compose.yml"), workDir: work, notes: [], imageRefs: {}, startedAt: "", urls: {} }));
+    const state = { project: "proofy-shop-dev", composeFile: join(work, "compose.yml"), workDir: work, notes: [], imageRefs: {}, startedAt: "", urls: {} };
+    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify({ ...state, token: "t0k3n" }));
     const calls: Array<{ call: string; env?: NodeJS.ProcessEnv }> = [];
     const proc: Proc = async (program, args, options) => {
       calls.push({ call: `${program} ${args.join(" ")}`, ...(options?.env ? { env: options.env } : {}) });
@@ -252,8 +253,14 @@ describe("dev test", () => {
     await cli(["dev", "test", "checkout"], dir, proc);
     const docker = calls.filter(({ call }) => call.startsWith("docker "));
     expect(docker.map(({ call }) => call.split(" ").slice(6, 9).join(" "))).toEqual(["ps --status running", "exec -T proofy-standin", "run --rm -T"]);
-    expect(docker[1]!.call).toMatch(/wget .*--post-data {2}http:\/\/127\.0\.0\.1:8099\/reset$/);
+    expect(docker[1]!.call).toMatch(/wget .*--header Authorization: Bearer t0k3n --post-data {2}http:\/\/127\.0\.0\.1:8099\/reset$/);
     expect(docker.every(({ env }) => env !== undefined && env.NO_COLOR === undefined && env.XDG_CACHE_HOME === undefined)).toBe(true);
+
+    // A dev sandbox started before sandboxes had a token is restarted, not tested.
+    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify(state));
+    const old = await cli(["dev", "test", "checkout"], dir, proc);
+    expect(old.code).toBe(2);
+    expect(old.out).toContain("The dev sandbox was started by an older proofy");
   });
 });
 

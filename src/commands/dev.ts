@@ -137,6 +137,10 @@ async function devTest(deps: Deps, project: Project, names: string[], extra: str
   if (!state || !(await running(deps, state))) {
     throw new CliError("The dev sandbox is not running", "VALIDATION_ERROR", ["Run `proofy dev up` first"]);
   }
+  // A state file written before sandboxes had a token: its fake-service container and Mailpit do not ask for one.
+  if (!state.token) {
+    throw new CliError("The dev sandbox was started by an older proofy", "VALIDATION_ERROR", ["Run `proofy dev down`, then `proofy dev up`"]);
+  }
   const available = await flowNames(project.paths);
   const withTests: string[] = [];
   for (const name of available) if (await exists(join(project.paths.tests, `${name}.spec.ts`))) withTests.push(name);

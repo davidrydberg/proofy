@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
@@ -176,6 +177,31 @@ export class Standin {
     }
     return state;
   }
+}
+
+export interface Admin {
+  /** Shared with the host and the runner only, so the app can neither read nor erase what it sent. */
+  token: string;
+  /** Only a dev sandbox resets: a sealed run keeps every call as the app made it. */
+  dev: boolean;
+  requests: (host: string | undefined) => RecordedRequest[];
+  reset: () => void;
+}
+
+/** Answers the admin port: health for the healthcheck to anyone, the recorded requests and a reset only with the token. */
+export function adminResponse(admin: Admin, method: string, url: string, authorization: string | undefined): StandinResponse {
+  const parsed = new URL(url, "http://admin");
+  if (parsed.pathname === "/health") return { status: 200, json: { ok: true } };
+  const expected = Buffer.from(`Bearer ${admin.token}`);
+  const given = Buffer.from(authorization ?? "");
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { status: 401, json: { error: "the admin port needs the sandbox token" } };
+  if (parsed.pathname === "/reset" && method === "POST") {
+    if (!admin.dev) return { status: 403, json: { error: "reset works only in a dev sandbox" } };
+    admin.reset();
+    return { status: 200, json: { ok: true } };
+  }
+  if (parsed.pathname === "/requests") return { status: 200, json: admin.requests(parsed.searchParams.get("host") ?? undefined) };
+  return { status: 404, json: { error: "unknown admin path" } };
 }
 
 export function refusal(host: string): StandinResponse {

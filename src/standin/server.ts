@@ -5,7 +5,7 @@ import { createSecureContext } from "node:tls";
 import { ADMIN_PORT, MOUNT } from "../sandbox/contract.js";
 import { ensureCa, leafFor } from "./ca.js";
 import { startDns } from "./dns.js";
-import { freshImports, Standin, type StandinResponse, type StandinSetup } from "./handle.js";
+import { adminResponse, freshImports, Standin, type StandinResponse, type StandinSetup } from "./handle.js";
 
 // The fake-service container's entry point. Paths are the container's mounts, set up by the sandbox compose file.
 const SETUP_FILE = `${MOUNT.runSetup}/standin.json`;
@@ -14,6 +14,8 @@ const OUT = MOUNT.out;
 
 interface Setup extends StandinSetup {
   address: string;
+  token: string;
+  dev: boolean;
 }
 
 const command = process.argv[2];
@@ -63,21 +65,17 @@ function serve(): void {
     listener(true),
   ).listen(443);
 
-  createHttp((req, res) => {
-    const url = new URL(req.url ?? "/", "http://admin");
-    if (url.pathname === "/health") {
-      send(res, { status: 200, json: { ok: true } });
-    } else if (url.pathname === "/reset" && req.method === "POST") {
-      // Called by the host before each dev test. Names looked up before it count again, so each test lists its own.
+  const admin = {
+    token: setup.token,
+    dev: setup.dev,
+    requests: (host: string | undefined) => standin.recordedFor(host),
+    // Called by the host before each dev test. Names looked up before it count again, so each test lists its own.
+    reset: () => {
       standin.reset();
       seen.clear();
-      send(res, { status: 200, json: { ok: true } });
-    } else if (url.pathname === "/requests") {
-      send(res, { status: 200, json: standin.recordedFor(url.searchParams.get("host") ?? undefined) });
-    } else {
-      send(res, { status: 404, json: { error: "unknown admin path" } });
-    }
-  }).listen(ADMIN_PORT);
+    },
+  };
+  createHttp((req, res) => send(res, adminResponse(admin, req.method ?? "GET", req.url ?? "/", req.headers.authorization))).listen(ADMIN_PORT);
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {
