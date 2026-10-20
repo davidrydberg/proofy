@@ -9,6 +9,7 @@ import { prepare, resolveImages, runTests, sandboxProc, type Sandbox, type Sandb
 function options(dir: string, config: Record<string, unknown>): SandboxOptions {
   return {
     sourceDir: dir,
+    repoDir: dir,
     e2eDir: join(dir, "e2e"),
     logDir: join(dir, "out"),
     config: configSchema.parse({ compose: ["compose.yml"], app: { service: "web", port: 80 }, ...config }),
@@ -105,7 +106,7 @@ describe("sandbox", () => {
       args.includes("--no-interpolate") ? ok(JSON.stringify(raw)) : { code: 0, stdout: JSON.stringify(model), stderr: warning("STRIPE_KEY") + warning("HOST_PORT"), timedOut: false };
     await expect(prepare(proc, options(dir, {}))).rejects.toMatchObject({
       code: "CONFIG_INVALID",
-      message: "The compose files use variables that have no value in the sandbox: ${STRIPE_KEY} in services.web.environment.KEY",
+      message: "The compose files use variables that have no fixed value in the sandbox: ${STRIPE_KEY} in services.web.environment.KEY",
       suggestions: [expect.stringContaining("never reads the shell's environment"), "Set KEY for service web in e2e/proofy.json env"],
     });
     // Set in e2e/proofy.json env, the empty value never reaches the app; the dropped port mapping never did.
@@ -113,6 +114,20 @@ describe("sandbox", () => {
 
     const broken: Proc = async () => ({ code: 1, stdout: "", stderr: `${warning("NAME")}services.web.container_name '' does not match pattern`, timedOut: false });
     await expect(prepare(broken, options(dir, {}))).rejects.toMatchObject({ suggestions: [expect.any(String), expect.stringMatching(/^NAME has no value: proofy never reads/)] });
+  });
+
+  it("refuses a variable docker needs where it reaches the app, even with a default, and leaves a warning worded otherwise blank", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-machine-"));
+    const model = { services: { web: { image: "shop", environment: { DATA: "/home/me/data", KEY: "" } } } };
+    const raw = { services: { web: { image: "shop", environment: { DATA: "${HOME:-/root}/data", KEY: "${STRIPE_KEY}" } } } };
+    const proc = (stderr: string): Proc => async (_program, args) => (args.includes("--no-interpolate") ? ok(JSON.stringify(raw)) : { code: 0, stdout: JSON.stringify(model), stderr, timedOut: false });
+    await expect(prepare(proc(""), options(dir, {}))).rejects.toMatchObject({
+      code: "CONFIG_INVALID",
+      message: "The compose files use variables that have no fixed value in the sandbox: ${HOME} in services.web.environment.DATA",
+      suggestions: [expect.stringContaining("never reads the shell's environment"), "Set DATA for service web in e2e/proofy.json env"],
+    });
+    // A compose version that words the warning otherwise refuses nothing more: STRIPE_KEY stays blank.
+    await expect(prepare(proc('level=warning msg="STRIPE_KEY is unset, using an empty string"'), options(dir, { env: { web: { DATA: "/data" } } }))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
   });
 
   it("refuses an included compose file that would take settings from an env file", async () => {
