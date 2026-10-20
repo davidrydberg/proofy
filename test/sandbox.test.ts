@@ -143,6 +143,11 @@ describe("sandbox", () => {
       message: "The compose files use variables that have no fixed value in the sandbox: ${BUILDX_BUILDER} in services.web.image, ${HTTPS_PROXY} in services.web.environment.PROXY",
       suggestions: [expect.any(String), expect.stringMatching(/^Replace \$\{BUILDX_BUILDER\} with a fixed value in the compose file: docker needs BUILDX_BUILDER/), "Set PROXY for service web in e2e/proofy.json env"],
     });
+    // A proxy variable may feed an image build, which has internet anyway, set on the machine or not.
+    const build = { services: { web: { build: { context: dir, args: { HTTP_PROXY: "${HTTP_PROXY:-}", no_proxy: "${no_proxy}" } } } } };
+    const proxied: Proc = async (_program, args) =>
+      args.includes("--no-interpolate") ? ok(JSON.stringify(build)) : { code: 0, stdout: JSON.stringify({ services: { web: { build: { context: dir, args: { HTTP_PROXY: "http://proxy:3128", no_proxy: "" } } } } }), stderr: 'level=warning msg="The \\"no_proxy\\" variable is not set. Defaulting to a blank string."', timedOut: false };
+    await expect(prepare(proxied, options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
   });
 
   it("refuses a bind mount, secret or config that is or will be created through a symlink pointing outside the repository", async () => {

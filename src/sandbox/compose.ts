@@ -191,6 +191,8 @@ export interface UnsetUse {
 
 // Service settings proofy drops, so a variable used only there needs no value.
 const DROPPED = new Set(["ports", "container_name", "env_file"]);
+/** The proxy variables docker keeps from the machine. An image build may take them as build args, since it has internet anyway. */
+export const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"].flatMap((name) => [name, name.toLowerCase()]);
 // A variable use: ${NAME}, ${NAME:-default} and the other braced forms, or $NAME.
 const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)([}:?+-])|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
@@ -200,7 +202,7 @@ const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)([}:?+-])|\$([A-Za-z_][A-Za-z0-9_]
  * config the app does not use. `raw` is the model before interpolation, `model` after. `unset` are the variables
  * compose left blank: one found nowhere is returned with an empty path, so it is never silently blank. `machine` tells
  * whether a variable is one docker itself needs, whose value comes from the machine running proofy, so any use counts,
- * also one with a default.
+ * also one with a default. A proxy variable in a service's build args never reaches the app, set or not.
  */
 export function unsetUses(raw: Record<string, unknown>, model: Record<string, unknown>, config: Config, unset: string[], machine: (name: string) => boolean = () => false): UnsetUse[] {
   const found = new Map<string, UnsetUse[]>(unset.map((name) => [name, []]));
@@ -222,12 +224,13 @@ export function unsetUses(raw: Record<string, unknown>, model: Record<string, un
     }
   };
   visit(raw, []);
-  const reaches = ({ path }: UnsetUse) => {
+  const reaches = ({ name, path }: UnsetUse) => {
     const [section = "", entry = "", setting = "", key = ""] = path;
     if (!["services", "volumes", "secrets", "configs"].includes(section)) return false;
     if ((model[section] as Record<string, unknown> | undefined)?.[entry] === undefined) return false;
     if (section !== "services") return true;
     if (DROPPED.has(setting)) return false;
+    if (setting === "build" && key === "args" && PROXY_VARIABLES.includes(name)) return false;
     return !(setting === "environment" && config.env[entry]?.[key] !== undefined);
   };
   return [...found].flatMap(([name, uses]) => (uses.length === 0 ? [{ name, path: [] }] : uses.filter(reaches)));
