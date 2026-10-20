@@ -8,6 +8,12 @@ You approve them, and every `proofy run` checks the app in a sealed Docker sandb
 The sandbox has no way out.
 Every outside call goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused and listed in the report.
 
+![How proofy works: you describe a test, your agent writes requirements, a test and fakes, you approve, every run is sealed in Docker, and the report shows evidence per requirement](docs/overview.gif)
+
+## How it works
+
+![The proofy flow: you describe it, AI writes the tests, you approve, proofy runs them with Playwright in sealed Docker, and the result lands on your PR](docs/flow.png)
+
 ## Install
 
 ```sh
