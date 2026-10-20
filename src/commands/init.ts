@@ -5,13 +5,14 @@ import { parseArgs } from "../args.js";
 import { SCHEMA_URL } from "../config.js";
 import type { Deps } from "../deps.js";
 import { renderInit, type Hint } from "../human.js";
-import { COMPOSE_NAMES, detectCompose, detectEnv } from "../detect.js";
+import { COMPOSE_NAMES, detectCompose, detectEnv, type EnvGuess } from "../detect.js";
+import { detectOutside } from "../outside.js";
 import { exists, findRoot, pathsFor } from "../project.js";
 import { ONBOARDING_ASK } from "./home.js";
 import type { CommandResult } from "./types.js";
 
 export const INIT_HELP = `usage: proofy init [--no-agents-md]
-description: Writes e2e/ with agent instructions, templates and a config filled from what it finds. Never overwrites a file
+description: Writes e2e/ with agent instructions, templates and a config filled from what it finds: the app's services, example settings, analytics hosts to record, and a backend it cannot see. Never overwrites a file; run it again to see what it finds
 flags[1]:
   --no-agents-md  Do not add the pointer line to the repository's AGENTS.md or CLAUDE.md
 examples:
@@ -34,23 +35,49 @@ export async function initCommand(args: string[], deps: Deps): Promise<CommandRe
   const found: string[] = [];
 
   const compose = await detectCompose(root);
-  const env = await detectEnv(root);
+  const rootEnv = await detectEnv(root);
+  // Each page-serving service gets the example settings from its own build folder or a folder named after it, the browser's first one falls back to the root's.
+  const envFor: Record<string, EnvGuess> = {};
+  for (const frontend of compose?.frontends ?? []) {
+    let env: EnvGuess | undefined;
+    for (const dir of [compose?.contexts[frontend.service], frontend.service]) {
+      if (!env && dir && dir !== ".") env = await detectEnv(root, dir);
+    }
+    env ??= frontend === compose?.app ? rootEnv : undefined;
+    if (env) envFor[frontend.service] = env;
+  }
+  const envs = [...new Map([rootEnv, ...Object.values(envFor)].filter((env): env is EnvGuess => env !== undefined).map((env) => [env.file, env])).values()];
+  const outside = await detectOutside(root, compose, envs);
+
   if (compose) {
     found.push(`${compose.file}: services ${compose.services.join(", ") || "none"}`);
     found.push(compose.app ? `app: likely ${compose.app.service} on port ${compose.app.port}` : "app: no service with a port, your agent picks one");
+    const others = compose.frontends.slice(1);
+    if (others.length > 0) found.push(`also serving pages: ${others.map((f) => `${f.service} on port ${f.port}`).join(", ")}. A test opens them at http://<service>:<port>/`);
+    for (const mount of compose.sourceMounts) {
+      found.push(`${mount.service} mounts ${mount.source} at ${mount.target}, so it is set up for development. The sandbox has no internet once it runs: your agent writes a compose file under e2e/ that installs dependencies when the image is built`);
+    }
   } else {
     found.push("no compose file: your agent drafts one during setup");
   }
-  if (env) {
-    found.push(`${env.file}: ${Object.keys(env.values).length} settings, ${env.replaced} secret-looking values replaced with fakes`);
+  for (const env of envs) {
+    const used = Object.entries(envFor).filter(([, e]) => e === env).map(([service]) => service);
+    found.push(`${env.file}: ${Object.keys(env.values).length} settings${used.length > 0 ? ` for ${used.join(", ")}` : ""}, ${env.replaced} secret-looking values replaced with fakes`);
   }
+  for (const port of new Set(outside.backends.map((backend) => backend.port))) {
+    const same = outside.backends.filter((backend) => backend.port === port);
+    const [first] = same;
+    const settings = same.map((backend) => `${backend.key} in ${backend.file}`).join(" and ");
+    const where = first?.sibling ? `, such as ${first.sibling.dir} (its ${first.sibling.service} service publishes ${port})` : "";
+    found.push(`${settings} ${same.length > 1 ? "point" : "points"} at localhost:${port}, which nothing here serves: likely a backend in another repository${where}. The sandbox builds only from this repository, so the backend comes in as a prebuilt image or as a fake`);
+  }
+  if (outside.record.length > 0) found.push(`recorded: ${outside.record.join(", ")} (analytics and error reports: the app does not need their answer)`);
+  if (outside.decide.length > 0) found.push(`outside hosts for your agent to fake or record: ${outside.decide.map((d) => `${d.host} (${d.from})`).join(", ")}`);
 
   const config: Record<string, unknown> = { $schema: SCHEMA_URL, compose: compose ? [compose.file] : [] };
-  if (compose?.app) {
-    config.app = { service: compose.app.service, port: compose.app.port, path: "/" };
-    if (env) config.env = { [compose.app.service]: env.values };
-  }
-  config.hosts = {};
+  if (compose?.app) config.app = { service: compose.app.service, port: compose.app.port, path: "/" };
+  if (Object.keys(envFor).length > 0) config.env = Object.fromEntries(Object.entries(envFor).map(([service, env]) => [service, env.values]));
+  config.hosts = Object.fromEntries(outside.record.map((host) => [host, "record"]));
 
   const write = async (file: string, content: string | (() => Promise<void>)) => {
     const label = relative(root, file);

@@ -50,7 +50,7 @@ export function renderInit(view: InitView, hints: Hint[], style: Style): string 
   const p = painter(style);
   const lines = [p.bold(`proofy init  ${view.root}`)];
   if (view.found.length > 0) {
-    lines.push("", p.bold("FOUND"), ...view.found.map((line) => `  ${truncate(line, style.width - 2)}`));
+    lines.push("", p.bold("FOUND"), ...view.found.map((line) => wrap(line, style.width, "  ", "    ")));
   }
   lines.push("", p.bold("WROTE"));
   lines.push(...(view.written.length > 0 ? view.written.map((file) => `  ${p.green(GLYPH.ok)} ${file}`) : [p.dim("  nothing, everything was there")]));
