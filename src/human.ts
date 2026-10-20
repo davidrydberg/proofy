@@ -70,11 +70,14 @@ export function renderRun(report: RunReport, result: Verdict, reportPath: string
   const p = painter(style);
   const color = result === "pass" ? p.green : result === "untrusted" ? p.yellow : p.red;
   const lines = [`${color(p.bold(VERDICT_TEXT[result]))}`, p.dim(`run ${report.id}  ${reportPath}`)];
+  for (const flow of report.source.approvalsChanged ?? []) {
+    lines.push(p.yellow(`approval changed in this PR: ${flow}`));
+  }
   if (report.environmentError) {
     lines.push("", ...report.environmentError.split("\n").slice(0, 8).map((line) => `  ${p.red(truncate(line, style.width - 2))}`));
   }
   for (const flow of report.flows) {
-    const trust = flow.approved ? "" : p.yellow("  not approved");
+    const trust = flow.approved ? "" : p.yellow(`  not approved${flow.changed ? `, changed since approval: ${flow.changed.join(", ")}` : ""}`);
     lines.push("", `${p.bold(flow.name)}  ${flow.status === "passed" ? p.green("passed") : p.red("failed")}${trust}`);
     for (const requirement of flow.requirements) {
       const detail =

@@ -44,15 +44,20 @@ export async function homeCommand(deps: Deps): Promise<CommandResult | string> {
   const lastRun = last ? `${last.id} ${last.kind}: ${verdict(last)}` : "none";
 
   const data: Data = { project, setup: checks.map((check) => ({ item: check.label, ok: check.ok ? "yes" : "no", value: check.value })) };
-  data.flows = flows.length > 0 ? flows.map((flow) => ({ flow: flow.name, state: flow.state, detail: flow.reason ?? "" })) : "none";
+  data.flows = flows.length > 0 ? flows.map((flow) => ({ flow: flow.name, state: flow.state, detail: detail(flow) })) : "none";
   if (orphans.length > 0) data.tests_without_requirements = orphans;
   data.last_run = lastRun;
   return {
     data,
     help: steps.map(([command, description]) => (description ? `Run \`${command}\` ${description}` : command)),
-    json: { project, setup: checks, flows: flows.map(({ name, state, runs, reason }) => ({ name, state, runs, ...(reason ? { reason } : {}) })), testsWithoutRequirements: orphans, lastRun: last?.id ?? null },
-    pretty: (style) => renderHome({ project, checks, flows, orphans, lastRun }, steps, style),
+    json: { project, setup: checks, flows: flows.map(({ name, state, runs, reason, changed }) => ({ name, state, runs, ...(reason ? { reason } : {}), ...(changed ? { changed } : {}) })), testsWithoutRequirements: orphans, lastRun: last?.id ?? null },
+    pretty: (style) => renderHome({ project, checks, flows: flows.map((flow) => ({ name: flow.name, state: flow.state, reason: detail(flow) })), orphans, lastRun }, steps, style),
   };
+}
+
+/** Why a flow is in its state: what changed since approval, then what its runs still lack. */
+function detail(flow: FlowStatus): string {
+  return [flow.changed ? `changed since approval: ${flow.changed.join(", ")}` : undefined, flow.reason].filter(Boolean).join("; ");
 }
 
 async function setupChecks(config: Config, root: string): Promise<Check[]> {
@@ -111,9 +116,9 @@ function nextSteps(checks: Check[], flows: FlowStatus[], orphans: string[]): Hin
   if (ready.length > 0) {
     steps.push([`Ready for the human to approve: ${ready.map((name) => `\`proofy approve ${name}\``).join(", ")}. Agents never approve`, ""]);
   }
-  const stale = flows.filter((flow) => flow.state === "out-of-date" && !ready.includes(flow.name)).map((flow) => flow.name);
+  const stale = flows.filter((flow) => flow.state === "out-of-date" && !ready.includes(flow.name));
   if (stale.length > 0) {
-    steps.push([`Changed since approval: ${stale.join(", ")}. Prove them again with 3 matching runs, then the human approves again`, ""]);
+    steps.push([`Changed since approval: ${stale.map((flow) => `${flow.name} (${flow.changed?.join(", ") ?? "changed"})`).join(", ")}. Prove them again with 3 matching runs, then the human approves again`, ""]);
   }
   if (orphans.length > 0) {
     steps.push([`Tests without requirements: ${orphans.join(", ")}. Write e2e/specs/<flow>.md for each, or delete the test`, ""]);

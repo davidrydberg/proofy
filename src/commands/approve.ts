@@ -9,7 +9,7 @@ import { loadProject } from "./context.js";
 import type { CommandResult } from "./types.js";
 
 export const APPROVE_HELP = `usage: proofy approve <flow>
-description: For the human, never the agent. Records fingerprints of the flow's requirements, test and fakes, after 3 runs with identical results
+description: For the human, never the agent. After 3 runs with identical results, records fingerprints of the flow's requirements, test and fakes, e2e/proofy.json and the compose files. Works only in an interactive terminal and asks you to type the flow name
 examples:
   proofy approve guest-checkout
 `;
@@ -37,6 +37,19 @@ export async function approveCommand(args: string[], deps: Deps): Promise<Comman
   const latest = status.runs[0] ? await readReport(paths, status.runs[0]) : undefined;
   const flow = latest?.flows.find((candidate) => candidate.name === name);
   const failing = flow?.requirements.filter((requirement) => requirement.result === "fail" || requirement.result === "not-reached").map((requirement) => requirement.id) ?? [];
+  if (!deps.ask) {
+    throw new CliError(`Only a person approves: \`proofy approve ${name}\` needs an interactive terminal`, "NOT_APPROVED", [
+      "Agents never approve: tell the human the flow is ready",
+      `The human runs \`proofy approve ${name}\` in their own terminal and types the flow name to confirm`,
+    ]);
+  }
+  const results = flow?.requirements.map((requirement) => `${requirement.id} ${requirement.result}`).join(", ") || "no requirements";
+  const typed = await deps.ask(
+    `Approving ${name} trusts its requirements, test and fakes, e2e/proofy.json and the compose files as they are now.\nResults in each of the last 3 runs: ${results}.\nType ${name} to approve it: `,
+  );
+  if (typed.trim() !== name) {
+    throw new CliError(`Not approved: the answer was not ${name}`, "NOT_APPROVED", [`Run \`proofy approve ${name}\` again and type ${name} to approve it`]);
+  }
   approvals.flows[name] = { ...status.fingerprint, approvedAt: deps.now().toISOString(), runs: status.runs, requirements: flow?.requirements.length ?? 0 };
   await writeApprovals(paths, approvals);
   const help = [`Commit e2e/proofy.lock.json with the flow's files`, `Run \`proofy run --all\` to check every approved flow`];

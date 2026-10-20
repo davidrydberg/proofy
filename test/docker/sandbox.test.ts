@@ -10,7 +10,9 @@ const FIXTURE = new URL("../fixtures/tiny-shop/", import.meta.url).pathname;
 
 async function cli(argv: string[], cwd: string): Promise<{ code: number; out: string }> {
   let out = "";
-  const code = await runCli(argv, { cwd, env: { ...process.env, NO_COLOR: "1" }, proc: spawnProc, now: () => new Date(), log: () => {} }, { write: (text) => (out += text), isTTY: false });
+  // The person at the terminal confirms an approval by typing the flow name.
+  const ask = async () => argv[1] ?? "";
+  const code = await runCli(argv, { cwd, env: { ...process.env, NO_COLOR: "1" }, proc: spawnProc, now: () => new Date(), log: () => {}, ask }, { write: (text) => (out += text), isTTY: false });
   return { code, out };
 }
 

@@ -36,6 +36,14 @@ export function renderMarkdown(report: RunReport, image: (path: string) => strin
   const lines = [`## ${options.title ?? "proofy"}: ${HEADLINE[result]}`, ""];
   const source = [report.source.pr ? `PR #${report.source.pr}` : undefined, report.source.commit ? `commit ${report.source.commit.slice(0, 12)}` : undefined, report.source.dirty ? "with uncommitted changes" : undefined].filter(Boolean);
   lines.push(`Run ${report.id} (${report.kind}), ${source.join(", ") || "working tree"}. Sealed: the app had no way out; every outside call went to a fake or was refused.`, "");
+  if (report.source.approvalsChanged) {
+    lines.push(
+      "**Approvals changed in this PR.** Only a person runs `proofy approve`: check in review that each change to e2e/proofy.lock.json is theirs.",
+      "",
+      ...report.source.approvalsChanged.map((flow) => `- approval changed in this PR: ${flow}`),
+      "",
+    );
+  }
   if (report.environmentError) {
     lines.push("```", report.environmentError, "```", "");
   }
@@ -43,7 +51,7 @@ export function renderMarkdown(report: RunReport, image: (path: string) => strin
     lines.push("| Flow | Result | Approved |", "|---|---|---|");
     for (const flow of report.flows) {
       const counts = countResults(flow);
-      lines.push(`| ${flow.name} | ${flow.status === "passed" ? "passed" : "FAILED"} (${counts}) | ${flow.approved ? "yes" : "no, result not trusted"} |`);
+      lines.push(`| ${flow.name} | ${flow.status === "passed" ? "passed" : "FAILED"} (${counts}) | ${flow.approved ? "yes" : `no, result not trusted${flow.changed ? ` (changed since approval: ${flow.changed.join(", ")})` : ""}`} |`);
     }
     lines.push("");
   }

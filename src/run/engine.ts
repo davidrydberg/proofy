@@ -8,7 +8,7 @@ import type { Proc } from "../sandbox/docker.js";
 import { baseUrl } from "../sandbox/compose.js";
 import { installImages, prepare, runTests, saveLogs, start, stop, type Sandbox, type SandboxOptions } from "../sandbox/sandbox.js";
 import type { Approvals } from "./approvals.js";
-import { fingerprint, sameFingerprint } from "./fingerprint.js";
+import { changedParts, fingerprint, sameFingerprint } from "./fingerprint.js";
 import { outDir, pruneRuns } from "./history.js";
 import { renderMarkdown } from "./report.js";
 import { collectResults, type PlannedFlow, type RunReport } from "./results.js";
@@ -34,7 +34,9 @@ export async function planFlows(ctx: Pick<RunContext, "source" | "config" | "app
   for (const name of names) {
     const print = await fingerprint(ctx.source, ctx.config, name);
     const specText = await readFile(join(ctx.source.specs, `${name}.md`), "utf8");
-    planned.push({ name, approved: sameFingerprint(ctx.approvals.flows[name], print), fingerprint: print, requirements: parseRequirements(specText) });
+    const approval = ctx.approvals.flows[name];
+    const approved = sameFingerprint(approval, print);
+    planned.push({ name, approved, ...(approval && !approved ? { changed: changedParts(approval, print) } : {}), fingerprint: print, requirements: parseRequirements(specText) });
   }
   return planned;
 }
