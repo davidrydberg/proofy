@@ -1,6 +1,6 @@
 {
   "name": "@davidrydberg/proofy",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Sealed end-to-end tests that your coding agent writes and you approve: requirements in plain words, evidence and screenshots per requirement.",
   "license": "MIT",
   "repository": {
