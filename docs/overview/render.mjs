@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
-const FPS = 15;
+const FPS = 10;
 const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const docs = join(here, "..");
@@ -25,7 +25,7 @@ async function renderGif(browser) {
     }
     execFileSync("ffmpeg", [
       "-y", "-loglevel", "error", "-framerate", String(FPS), "-i", join(frames, "%04d.png"),
-      "-vf", "scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+      "-vf", "scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle",
       "-loop", "0", join(docs, "overview.gif"),
     ]);
   } finally {

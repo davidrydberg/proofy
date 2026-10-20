@@ -1,8 +1,9 @@
 flowchart LR
   describe["<b>1. You describe it</b><br/>a guest can check out<br/>and gets an email<br/><br/><i>Tests start from what you<br/>want, not from the code</i>"]
-  write["<b>2. AI writes the tests</b><br/>requirements R1..Rn,<br/>a Playwright test, fakes<br/><br/><i>No hand-written<br/>end-to-end tests</i>"]
-  approve["<b>3. You approve</b><br/>proofy approve, after<br/>3 identical runs<br/><br/><i>The AI never marks<br/>its own homework</i>"]
-  run["<b>4. proofy runs them</b><br/>Playwright in sealed Docker,<br/>no AI, on every change<br/><br/><i>Same answer every run,<br/>nothing leaks out</i>"]
-  report["<b>5. Result on your PR</b><br/>per requirement: asked,<br/>happened, screenshots<br/><br/><i>Proof you can review,<br/>not just a green tick</i>"]
+  write["<b>2. Your agent writes them</b><br/>any coding agent: R1..Rn,<br/>a Playwright test, fakes<br/><br/><i>No hand-written<br/>end-to-end tests</i>"]
+  check["<b>3. You read the report</b><br/>proofy report: each requirement,<br/>evidence and screenshots<br/><br/><i>You see the proof<br/>before you trust it</i>"]
+  approve["<b>4. You approve</b><br/>the requirements and what the<br/>agent assumed, after 3 identical runs<br/><br/><i>The agent never marks<br/>its own homework</i>"]
+  run["<b>5. proofy runs them</b><br/>Playwright in sealed Docker,<br/>no AI, on every change<br/><br/><i>Same answer every run,<br/>nothing leaks out</i>"]
+  report["<b>6. Result on your PR</b><br/>per requirement: asked,<br/>happened, screenshots<br/><br/><i>Proof you can review,<br/>not just a green tick</i>"]
 
-  describe --> write --> approve --> run --> report
+  describe --> write --> check --> approve --> run --> report
