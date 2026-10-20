@@ -112,6 +112,10 @@ proofy refuses to start a service whose compose settings would break the seal:
 - An app that starts with `docker compose`; your agent can draft the compose file
 - The [GitHub CLI](https://cli.github.com), only to test pull requests or post reports on them
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately, as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 [MIT](LICENSE)
