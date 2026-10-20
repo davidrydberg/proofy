@@ -6,8 +6,10 @@ Your agent follows the instructions proofy puts in your repo to write numbered r
 You approve them, and every `proofy run` checks the app in a sealed Docker sandbox, with no AI, and reports per requirement what was asked, what happened and the evidence, with screenshots.
 
 The sandbox has no way out.
-Every outside call goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused and listed in the report.
-proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, or a mount of the Docker or containerd socket.
+Every outside call to a hostname goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused.
+The report lists every HTTP and HTTPS call, and every name the app looked up without calling it over HTTP; calls to a raw IP address reach nothing and are not listed.
+The app's settings come only from `e2e/proofy.json` and the compose files, never from your shell's environment or a `.env` file.
+proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, `build.ssh`, `build.secrets`, a volume with a `driver` or `driver_opts`, or a mount of the Docker or containerd socket, also as a secret or config file.
 
 ![How proofy works: you describe a test, your agent writes requirements, a test and fakes, you approve, every run is sealed in Docker, and the report shows evidence per requirement](docs/overview.gif)
 
@@ -59,7 +61,7 @@ guest-checkout  passed
 Exit codes: 0 pass, 1 an approved flow failed, 2 usage or config, 3 the sandbox failed, 4 not approved.
 `examples/woocommerce` is a complete shop with two flows, and [pull request 1](https://github.com/davidrydberg/proofy/pull/1) shows a report posted with `--post`.
 
-An approval covers the flow's requirements, test and fakes, `e2e/proofy.json` and the compose files it lists.
+An approval covers the flow's requirements, its test and every other file in `e2e/tests/` but other flows' tests, every file in `e2e/standins/`, `e2e/proofy.json`, and the compose files it lists with the files they include or extend.
 A change to any of them makes the flow out of date until you approve it again, and `proofy` and the run report say what changed.
 
 Only you run `proofy approve`: it works only in an interactive terminal and asks you to type the flow name.

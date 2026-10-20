@@ -11,7 +11,7 @@ import { approvalsFile } from "../run/approvals.js";
 import { planFlows, sealedRun, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
 import { EXIT_FOR, verdict } from "../run/report.js";
-import type { RunReport } from "../run/results.js";
+import { failing, type RunReport } from "../run/results.js";
 import { loadProject, projectName, workingTreeInfo } from "./context.js";
 import type { CommandResult } from "./types.js";
 
@@ -112,7 +112,7 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
   const relative = runDir.startsWith(root) ? runDir.slice(root.length + 1) : runDir;
   const failed = report.flows.flatMap((flow) =>
     flow.requirements
-      .filter((requirement) => requirement.result === "fail" || requirement.result === "not-reached")
+      .filter((requirement) => failing(requirement.result))
       .map((requirement) => ({ flow: flow.name, req: requirement.id, expected: requirement.expected ?? "", actual: requirement.actual ?? requirement.result })),
   );
   const hints: Hint[] = [];
@@ -127,7 +127,7 @@ export function runResult(report: RunReport, runDir: string, root: string, poste
     run: report.id,
     verdict: result,
     report: `${relative}/report.md`,
-    flows: report.flows.map((flow) => ({ flow: flow.name, approved: flow.approved ? "yes" : "no", status: flow.status, failed: flow.requirements.filter((r) => r.result === "fail" || r.result === "not-reached").length })),
+    flows: report.flows.map((flow) => ({ flow: flow.name, approved: flow.approved ? "yes" : "no", status: flow.status, failed: flow.requirements.filter((r) => failing(r.result)).length })),
   };
   if (approvalsChanged.length > 0) data.approvals_changed_in_pr = approvalsChanged;
   if (report.environmentError) data.environment_error = report.environmentError.split("\n")[0];

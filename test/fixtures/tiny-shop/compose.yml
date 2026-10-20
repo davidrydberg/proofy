@@ -7,3 +7,14 @@ services:
     environment:
       NODE_EXTRA_CA_CERTS: /proofy/ca.crt
       SMTP_HOST: mailpit
+      SHOP_MODE: ${SHOP_MODE:-sandbox}
+    secrets: [shop_key]
+    configs:
+      - source: shop_settings
+        target: /app/settings.txt
+secrets:
+  shop_key:
+    file: ./shop-key.txt
+configs:
+  shop_settings:
+    content: currency=SEK

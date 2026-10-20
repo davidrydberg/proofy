@@ -1,8 +1,7 @@
 # proofy
 
 CLI for sealed end-to-end tests that a coding agent writes and a person approves.
-`prd.md` is the spec.
-Read it before changing behaviour, and change it in the same commit when a decision changes.
+The spec, `prd.md`, is kept outside the repository: it is gitignored on purpose.
 
 ## Layout
 
@@ -31,7 +30,7 @@ Read it before changing behaviour, and change it in the same commit when a decis
 ## Rules
 
 - proofy never calls an AI model. AI work happens in the user's agent, guided by `templates/e2e/AGENTS.md`.
-- `templates/e2e/AGENTS.md` is the product as much as the code. Changes to the flow, states, helpers or rules go there and in `prd.md` together, and are copied to `examples/woocommerce/e2e/`.
+- `templates/e2e/AGENTS.md` is the product as much as the code. Changes to the flow, states, helpers or rules go there and are copied to `examples/woocommerce/e2e/`.
 - The seal is the product's promise: every service on one internal network, every lookup answered by the fake-service container, no published ports except through the dev forwarder. Change `src/sandbox/compose.ts` only with its tests and the Docker test.
 - Never prompt, except `proofy approve`: it works only in an interactive terminal and asks the person to type the flow name. Every other input is an argument, a flag or the config.
 - `init` never overwrites a user's file.

@@ -170,6 +170,36 @@ describe("commands without Docker", () => {
     expect((await cli(["run", "--all"], dir)).code).toBe(4);
   });
 
+  it("an approval covers what the named files depend on: test helpers, every file of the fakes, and included or extended compose files", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "compose.yml"), "include:\n  - db/compose.yml\nservices:\n  web:\n    image: shop\n    extends:\n      file: base.yml\n      service: base\n");
+    mkdirSync(join(dir, "db"));
+    writeFileSync(join(dir, "db/compose.yml"), "services:\n  db:\n    image: mariadb:11\n");
+    writeFileSync(join(dir, "base.yml"), "services:\n  base:\n    environment:\n      MODE: shop\n");
+    mkdirSync(join(dir, "e2e/tests/helpers"), { recursive: true });
+    writeFileSync(join(dir, "e2e/tests/helpers/buyer.ts"), "export const buyer = 'a';\n");
+    writeFileSync(join(dir, "e2e/tests/refund.spec.ts"), "// another flow's test\n");
+    mkdirSync(join(dir, "e2e/standins/lib"), { recursive: true });
+    writeFileSync(join(dir, "e2e/standins/lib/prices.json"), "[1]\n");
+    for (const id of ["20261020-110000", "20261020-110100", "20261020-110200"]) await fakeRun(dir, id, ["pass", "pass"]);
+    expect((await cli(["approve", "checkout"], dir, noDocker, person("checkout"))).code).toBe(0);
+
+    const changes: Array<[string, string, string]> = [
+      ["e2e/tests/refund.spec.ts", "// changed\n", ""],
+      ["e2e/tests/helpers/buyer.ts", "export const buyer = 'b';\n", "test"],
+      ["e2e/standins/lib/prices.json", "[2]\n", "fakes"],
+      ["db/compose.yml", "services:\n  db:\n    image: mariadb:12\n", "compose files"],
+      ["base.yml", "services:\n  base:\n    environment:\n      MODE: other\n", "compose files"],
+    ];
+    for (const [file, content, part] of changes) {
+      const original = readFileSync(join(dir, file), "utf8");
+      writeFileSync(join(dir, file), content);
+      expect((await cli([], dir)).out, file).toContain(part ? `checkout,out-of-date,"changed since approval: ${part};` : "checkout,approved");
+      writeFileSync(join(dir, file), original);
+    }
+    expect((await cli([], dir)).out).toContain("checkout,approved");
+  });
+
   it("an approval from proofy 0.1, without config and compose fingerprints, reads as out of date", async () => {
     const dir = await approvedProject();
     const lock = join(dir, "e2e/proofy.lock.json");
@@ -192,6 +222,27 @@ describe("commands without Docker", () => {
     expect(shown.code).toBe(0);
     expect(shown.out).toContain("run: 20261020-110000");
     expect((await cli(["report", "nope"], dir)).code).toBe(2);
+  });
+});
+
+describe("dev test", () => {
+  it("resets the fake-service container before each test, and runs docker without the shell's variables", async () => {
+    const dir = project();
+    const work = join(dir, ".cache", "sandbox");
+    mkdirSync(join(work, "runner"), { recursive: true });
+    mkdirSync(join(work, "out"), { recursive: true });
+    mkdirSync(join(dir, "e2e/out"), { recursive: true });
+    writeFileSync(join(dir, "e2e/out/dev.json"), JSON.stringify({ project: "proofy-shop-dev", composeFile: join(work, "compose.yml"), workDir: work, notes: [], imageRefs: {}, startedAt: "", urls: {} }));
+    const calls: Array<{ call: string; env?: NodeJS.ProcessEnv }> = [];
+    const proc: Proc = async (program, args, options) => {
+      calls.push({ call: `${program} ${args.join(" ")}`, ...(options?.env ? { env: options.env } : {}) });
+      return { code: 0, stdout: args.includes("ps") ? "abc\n" : "", stderr: "", timedOut: false };
+    };
+    await cli(["dev", "test", "checkout"], dir, proc);
+    const docker = calls.filter(({ call }) => call.startsWith("docker "));
+    expect(docker.map(({ call }) => call.split(" ").slice(6, 9).join(" "))).toEqual(["ps --status running", "exec -T proofy-standin", "run --rm -T"]);
+    expect(docker[1]!.call).toMatch(/wget .*--post-data {2}http:\/\/127\.0\.0\.1:8099\/reset$/);
+    expect(docker.every(({ env }) => env !== undefined && env.NO_COLOR === undefined && env.XDG_CACHE_HOME === undefined)).toBe(true);
   });
 });
 

@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
-import { MOUNT, RUNNER } from "./contract.js";
-import { sandboxCompose, subnetFor, type Mode } from "./compose.js";
+import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
+import { sandboxCompose, subnetFor, unsetUses, type Mode } from "./compose.js";
 import { tail, type Proc } from "./docker.js";
+import { composeSources } from "./sources.js";
 
 export const PKG_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -26,7 +27,6 @@ export interface SandboxOptions {
   project: string;
   /** Shared by every run of this repository: the certificate authority. */
   cacheDir: string;
-  env: NodeJS.ProcessEnv;
   log: (line: string) => void;
 }
 
@@ -47,6 +47,16 @@ export interface ServiceImage {
   id?: string;
   /** The registry digest of a pulled image. */
   digest?: string;
+}
+
+// What docker needs to reach the daemon and its own settings. Compose interpolates ${VAR} in the app's compose files
+// from its environment, so anything more would let the shell running proofy reach the app.
+const DOCKER_ENV = ["PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "XDG_RUNTIME_DIR"];
+
+/** Runs every program with only the variables docker needs, so the app's settings come only from e2e/proofy.json and the compose files. */
+export function sandboxProc(proc: Proc, env: NodeJS.ProcessEnv): Proc {
+  const minimal = Object.fromEntries(DOCKER_ENV.flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])));
+  return (program, args, options = {}) => proc(program, args, { ...options, env: minimal });
 }
 
 export function cacheDirFor(env: NodeJS.ProcessEnv, root: string): string {
@@ -121,16 +131,29 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
   await symlink(MOUNT.pkg, join(dirs.nodeModules, "@davidrydberg", "proofy"));
   await symlink(`${MOUNT.pkg}/node_modules/@playwright/test`, join(dirs.nodeModules, "@playwright", "test"));
 
+  // An included compose file reads its own env file, whatever --env-file says.
+  const { envFiles } = await composeSources(sourceDir, config.compose);
+  if (envFiles.length > 0) {
+    throw new CliError(`An included compose file would take settings from ${envFiles.join(", ")}`, "CONFIG_INVALID", [
+      "Settings come only from e2e/proofy.json env and the compose files",
+      "List the included compose file in e2e/proofy.json compose instead of including it",
+    ]);
+  }
   // An empty env file keeps compose from reading the repository's .env for interpolation. Relative paths in the
   // compose files resolve against the first file's folder, as they do when the app is started by hand.
   const emptyEnv = join(workDir, "empty.env");
   await writeFile(emptyEnv, "");
   const args = ["compose", ...config.compose.flatMap((file) => ["-f", join(sourceDir, file)]), "--env-file", emptyEnv];
   const normalized = await proc("docker", [...args, "config", "--format", "json", "--no-env-resolution"]);
+  const unset = [...new Set([...normalized.stderr.matchAll(UNSET)].map((match) => match[1] ?? ""))];
   if (normalized.code !== 0) {
-    throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(normalized.stderr, 8)]);
+    throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [
+      tail(normalized.stderr, 8),
+      ...(unset.length > 0 ? [`${unset.join(", ")} ${unset.length === 1 ? "has" : "have"} no value: ${NO_SHELL}`] : []),
+    ]);
   }
   const model = JSON.parse(normalized.stdout) as Record<string, unknown>;
+  if (unset.length > 0) await refuseUnset(proc, args, model, config, unset);
   const { subnet, standinIp } = subnetFor(options.project, attempt);
   const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), user: hostUser(), dirs });
   const composeFile = join(workDir, "compose.yml");
@@ -145,6 +168,27 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
     Object.entries(generated.compose.services as Record<string, { image?: string }>).map(([name, service]) => [name, service.image ?? `${options.project}-${name}`]),
   );
   return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs };
+}
+
+// Compose's warning for a ${VAR} it replaced with an empty value.
+const UNSET = /The \\?"([A-Za-z_][A-Za-z0-9_]*)\\?" variable is not set/g;
+const NO_SHELL = "proofy never reads the shell's environment or a .env file, settings come only from e2e/proofy.json env and the compose files";
+
+/** Refuses a variable that would silently be empty where it reaches the app. */
+async function refuseUnset(proc: Proc, args: string[], model: Record<string, unknown>, config: Config, unset: string[]): Promise<void> {
+  const raw = await proc("docker", [...args, "config", "--format", "json", "--no-interpolate"]);
+  if (raw.code !== 0) throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(raw.stderr, 8)]);
+  const uses = unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset);
+  if (uses.length === 0) return;
+  const where = uses.map((use) => `\${${use.name}}${use.path.length > 0 ? ` in ${use.path.join(".")}` : ""}`);
+  throw new CliError(`The compose files use variables that have no value in the sandbox: ${where.join(", ")}`, "CONFIG_INVALID", [
+    NO_SHELL,
+    ...uses.map((use) =>
+      use.path[0] === "services" && use.path[2] === "environment"
+        ? `Set ${use.path[3]} for service ${use.path[1]} in e2e/proofy.json env`
+        : `Give ${use.name} a default in the compose file, such as \${${use.name}:-value}`,
+    ),
+  ]);
 }
 
 /**
@@ -219,6 +263,14 @@ export async function runTests(proc: Proc, options: SandboxOptions, sandbox: San
   } finally {
     await bridge.stop();
   }
+}
+
+/** Gives the fake-service container a fresh start for a dev test: current fakes, empty state, no earlier calls. */
+export async function resetFakes(proc: Proc, sandbox: Sandbox): Promise<void> {
+  await must(
+    proc("docker", [...compose(sandbox), "exec", "-T", STANDIN, "wget", "-q", "-O", "-", "--post-data", "", `http://127.0.0.1:${ADMIN_PORT}/reset`]),
+    "Resetting the fake-service container failed",
+  );
 }
 
 export async function saveLogs(proc: Proc, sandbox: Sandbox, dir: string): Promise<void> {
