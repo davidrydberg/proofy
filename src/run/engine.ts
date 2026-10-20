@@ -6,7 +6,7 @@ import type { Paths } from "../project.js";
 import { MOUNT } from "../sandbox/contract.js";
 import type { Proc } from "../sandbox/docker.js";
 import { baseUrl } from "../sandbox/compose.js";
-import { installImages, prepare, runTests, saveLogs, start, stop, type Sandbox, type SandboxOptions } from "../sandbox/sandbox.js";
+import { installImages, prepare, resolveImages, runTests, saveLogs, start, stop, type Sandbox, type SandboxOptions, type ServiceImage } from "../sandbox/sandbox.js";
 import type { Approvals } from "./approvals.js";
 import { changedParts, fingerprint, sameFingerprint } from "./fingerprint.js";
 import { outDir, pruneRuns } from "./history.js";
@@ -68,11 +68,13 @@ export async function sealedRun(ctx: RunContext, planned: PlannedFlow[], options
   const sandboxOpts = sandboxOptions(ctx, "run", options.project, runDir);
   let sandbox: Sandbox | undefined;
   let environmentError: string | undefined;
+  let images: ServiceImage[] | undefined;
   const notes: string[] = [];
   try {
     sandbox = await prepare(ctx.proc, sandboxOpts);
     notes.push(...sandbox.notes);
     await installImages(ctx.proc, sandboxOpts, sandbox);
+    images = await resolveImages(ctx.proc, sandbox);
     sandbox = await start(ctx.proc, sandboxOpts, sandbox);
     await testsInSandbox(ctx, sandbox, planned, []);
   } catch (error) {
@@ -89,7 +91,7 @@ export async function sealedRun(ctx: RunContext, planned: PlannedFlow[], options
       }
     }
   }
-  return finishRun(ctx, { id, kind: "run", startedAt, runDir, planned, notes, ...(environmentError ? { environmentError } : {}), ...(sandbox ? { sandbox } : {}) });
+  return finishRun(ctx, { id, kind: "run", startedAt, runDir, planned, notes, ...(environmentError ? { environmentError } : {}), ...(sandbox ? { sandbox } : {}), ...(images ? { images } : {}) });
 }
 
 /** Runs the planned flows in a sandbox that is already up: a sealed run's, or the dev sandbox. */
@@ -105,7 +107,7 @@ export async function testsInSandbox(ctx: RunContext, sandbox: Sandbox, planned:
 
 export async function finishRun(
   ctx: RunContext,
-  run: { id: string; kind: "run" | "dev"; startedAt: string; runDir: string; planned: PlannedFlow[]; notes: string[]; environmentError?: string; sandbox?: Sandbox; offsets?: Offsets },
+  run: { id: string; kind: "run" | "dev"; startedAt: string; runDir: string; planned: PlannedFlow[]; notes: string[]; environmentError?: string; sandbox?: Sandbox; offsets?: Offsets; images?: ServiceImage[] },
 ): Promise<RunReport> {
   await mkdir(run.runDir, { recursive: true });
   if (run.sandbox) await harvest(run.sandbox, run.runDir, run.offsets);
@@ -121,6 +123,7 @@ export async function finishRun(
     outside: collected.outside,
     lookedUpOnly: collected.lookedUpOnly,
     notes: run.notes,
+    ...(run.images ? { images: run.images } : {}),
     ...(environmentError ? { environmentError } : {}),
   };
   await writeFile(join(run.runDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);

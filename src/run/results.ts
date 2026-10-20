@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { sameJson, showValue } from "../test/compare.js";
 import type { Entry } from "../test/index.js";
+import type { ServiceImage } from "../sandbox/sandbox.js";
 import type { Fingerprint } from "./fingerprint.js";
 import type { Requirement } from "./spec.js";
 
@@ -13,6 +15,8 @@ export interface RequirementResult {
   did?: string;
   expected?: string;
   actual?: string;
+  /** Who decided the shown claim: proofy, by comparing expected and actual, or the test, with its own ok. */
+  decidedBy?: "proofy" | "test";
   evidence?: unknown;
   why?: string;
   fakes: string[];
@@ -58,6 +62,8 @@ export interface RunReport {
   /** Names the app looked up but never sent an HTTP request to, such as an SMTP host. */
   lookedUpOnly: string[];
   notes: string[];
+  /** The image each service ran, when the install phase finished. */
+  images?: ServiceImage[];
   environmentError?: string;
 }
 
@@ -146,17 +152,20 @@ export function flowResult(plan: PlannedFlow, entries: Entry[], tests: TestResul
   const anyTestBroke = tests.length === 0 || tests.some((test) => test.status !== "passed" && !/Requirements not met/.test(test.error ?? ""));
   const requirements = plan.requirements.map((requirement): RequirementResult => {
     const claims = entries.filter((entry): entry is Extract<Entry, { type: "claim" }> => entry.type === "claim" && entry.spec === requirement.id);
-    const failed = claims.find((entry) => !entry.ok);
+    // A compared claim is compared again here from its recorded values, never taken from its ok.
+    const failed = claims.find((entry) => !(entry.compared ? sameJson(entry.expected, entry.actual) : entry.ok));
     const shown = failed ?? claims[0];
     if (shown) {
       const fakes = [...new Set(claims.flatMap((entry) => entry.fakes))].sort();
+      const compared = shown.compared === true;
       return {
         id: requirement.id,
         text: requirement.text,
         result: failed ? "fail" : "pass",
         did: shown.did,
-        expected: shown.expected,
-        actual: shown.actual,
+        expected: showValue(shown.expected, compared),
+        actual: showValue(shown.actual, compared),
+        decidedBy: compared ? "proofy" : "test",
         ...(shown.evidence === undefined ? {} : { evidence: shown.evidence }),
         fakes,
       };
