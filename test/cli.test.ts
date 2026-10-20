@@ -72,7 +72,11 @@ describe("proofy cli", () => {
       expect(readFileSync(join(dir, file), "utf8").length).toBeGreaterThan(0);
     }
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toContain("e2e/out/");
-    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain("read `e2e/AGENTS.md`");
+    const pointer = readFileSync(join(dir, "AGENTS.md"), "utf8");
+    expect(pointer).toContain("read `e2e/AGENTS.md`");
+    expect(pointer).toContain("is the go-ahead to edit files under `e2e/`");
+    expect(out).toContain('"add a proofy test: ');
+    expect(out).not.toContain("set up proofy");
   });
 
   it("init never overwrites and adds the pointer only once", async () => {
@@ -86,6 +90,14 @@ describe("proofy cli", () => {
     const agents = readFileSync(join(dir, "AGENTS.md"), "utf8");
     expect(agents.startsWith("# My repo\n")).toBe(true);
     expect(agents.match(/e2e\/AGENTS\.md/g)).toHaveLength(1);
+  });
+
+  it("init leaves an earlier wording of the pointer alone", async () => {
+    const old = "End-to-end tests: read `e2e/AGENTS.md` before writing or changing anything under `e2e/`.\n";
+    const dir = repo({ "AGENTS.md": old });
+    const { out } = await cli(["init"], dir);
+    expect(out).toContain("already in AGENTS.md");
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toBe(old);
   });
 
   it("init points CLAUDE.md-only repos at the instructions, and --no-agents-md skips it", async () => {
@@ -102,8 +114,9 @@ describe("proofy cli", () => {
     const dir = repo();
     await cli(["init"], dir);
     let out = (await cli([], dir)).out;
-    expect(out).toContain("Setup is missing: compose, app.");
-    expect(out).toContain("Tell your agent what to test");
+    expect(out).toContain("Setup is missing: compose, app. Tell your agent what to test");
+    expect(out).toContain("It finishes setup first");
+    expect(out).not.toContain("set up proofy");
 
     writeFileSync(join(dir, "compose.yml"), COMPOSE);
     writeFileSync(

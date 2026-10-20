@@ -27,8 +27,9 @@ Add `e2e/` to your repo:
 proofy init     # adds e2e/ with agent instructions, templates and a config filled from your repo
 ```
 
-Then tell your agent "set up proofy", and after that what to test: "add a proofy test: a guest can buy a product and gets a confirmation email".
-The agent interviews you, writes `e2e/specs/<flow>.md` and the test, and runs it until three runs agree.
+Then tell your agent what to test, in one sentence: "add a proofy test: a guest can buy a product and gets a confirmation email".
+It finishes setup if needed, writes `e2e/specs/<flow>.md` and the test, and runs it until three runs agree, without stopping to ask.
+Whatever you did not say, it picks and lists under `## Assumed` in the spec, so you review everything once, when you approve.
 
 ```sh
 proofy                            # setup, every flow's state and the next step; safe for a session-start hook
