@@ -14,6 +14,8 @@
   #stage { position: relative; width: 960px; height: 540px; display: flex; flex-direction: column; }
   #tabs { flex: none; height: 30px; display: flex; background: #1a1c2a; font-size: 13px; color: var(--dim); }
   #tabs div { padding: 0 22px; line-height: 30px; border-right: 1px solid #2d3046; }
+  #tabs #lights { display: flex; align-items: center; gap: 8px; padding: 0 16px 0 14px; border: none; }
+  #lights i { width: 12px; height: 12px; border-radius: 6px; }
   #tabs .on { background: var(--bg); color: var(--text); }
   #claude { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 14px 0 10px; }
   #shell { flex: 1; min-height: 0; padding: 14px 18px; display: none; }
@@ -50,7 +52,7 @@
 </head>
 <body>
 <div id="stage">
-  <div id="tabs"><div id="tab1" class="on">claude</div><div id="tab2">glow</div></div>
+  <div id="tabs"><div id="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><div id="tab1" class="on">claude</div><div id="tab2">glow</div></div>
   <div id="claude">
   <div id="head">
     <svg viewBox="0 0 118 78" shape-rendering="crispEdges" fill="#d97757">
