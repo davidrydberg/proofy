@@ -54,7 +54,8 @@ describe("sandbox compose", () => {
     expect(web.depends_on).toEqual({ "proofy-standin": { condition: "service_healthy", required: true } });
     expect(services.db!.dns).toEqual(["10.210.1.53"]);
     expect(compose.networks).toEqual({ proofy: { internal: true, ipam: { config: [{ subnet: "10.210.1.0/24" }] } } });
-    expect(compose.volumes).toEqual(MODEL.volumes);
+    // A volume gets the sandbox's name, never the app's own, so the sandbox starts it empty and shares it with nothing.
+    expect(compose.volumes).toEqual({ data: {} });
     expect(notes).toEqual(["web: env_file ignored, settings come only from e2e/proofy.json env"]);
     expect(services["proofy-runner"]!.profiles).toEqual(["proofy-runner"]);
     expect(services["proofy-runner"]!.user).toBe("501:20");
@@ -115,13 +116,16 @@ describe("sandbox compose", () => {
       [{ build: { context: "/Users/me" } }, /sets build\.context \/Users\/me, which would give the image build host files outside the repository/],
       [{ build: { context: "/repo/../etc" } }, /sets build\.context/],
       [{ build: { context: "/repository" } }, /sets build\.context/],
+      [{ volumes_from: ["container:devbox"] }, /sets volumes_from container:devbox, which would give it the mounts of a container outside the sandbox/],
+      [{ pid: "container:devbox" }, /sets pid: container:devbox/],
+      [{ ipc: "container:devbox" }, /sets ipc: container:devbox/],
       [{ build: { context: "/repo", additional_contexts: { keys: "/Users/me/.ssh" } } }, /sets build\.additional_contexts\.keys \/Users\/me\/\.ssh/],
       [{ build: { context: "/repo", additional_contexts: { layout: "oci-layout:///Users/me/layout@sha256:abc" } } }, /sets build\.additional_contexts\.layout/],
     ];
     for (const [settings, message] of refused) {
       expect(() => generate({ services: { web: { image: "x", ...settings } } }, { compose: ["c.yml"] }), JSON.stringify(settings)).toThrow(message);
     }
-    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", build: { context: ".", ssh: [], secrets: [], privileged: false, entitlements: [] }, volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "bind", source: "/repo", target: "/app" }, { type: "volume", source: "data", target: "/data" }, { type: "tmpfs", target: "/tmp" }] };
+    const allowed = { image: "x", volumes_from: ["db", "service:db"], privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", build: { context: ".", ssh: [], secrets: [], privileged: false, entitlements: [] }, volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "bind", source: "/repo", target: "/app" }, { type: "volume", source: "data", target: "/data" }, { type: "tmpfs", target: "/tmp" }] };
     expect(() => generate({ services: { web: allowed, db: { image: "y" } }, volumes: { data: { name: "shop_data" } } }, { compose: ["c.yml"] })).not.toThrow();
     const contexts = [
       { context: "/repo" },
@@ -133,12 +137,13 @@ describe("sandbox compose", () => {
     }
   });
 
-  it("refuses a volume with driver options or a driver other than local, which could mount a host folder or a network share", () => {
+  it("refuses a volume with driver options, a driver other than local or external, which could mount host data, and drops its fixed name", () => {
     const web = { image: "x", volumes: [{ type: "volume", source: "share", target: "/share" }] };
     for (const share of [{ driver_opts: { type: "nfs", o: "addr=10.0.0.1,rw", device: ":/export" } }, { driver: "local", driver_opts: { type: "none", o: "bind", device: "/var/run" } }, { driver: "rclone" }]) {
       expect(() => generate({ services: { web }, volumes: { share: { name: "shop_share", ...share } } }, { compose: ["c.yml"] }), JSON.stringify(share)).toThrow(/Volume share sets driver/);
     }
-    expect(generate({ services: { web }, volumes: { share: { name: "shop_share", driver: "local" } } }, { compose: ["c.yml"] }).compose.volumes).toEqual({ share: { name: "shop_share", driver: "local" } });
+    expect(generate({ services: { web }, volumes: { share: { name: "shop_share", driver: "local" } } }, { compose: ["c.yml"] }).compose.volumes).toEqual({ share: { driver: "local" } });
+    expect(() => generate({ services: { web }, volumes: { share: { name: "other_db", external: true } } }, { compose: ["c.yml"] })).toThrow(/Volume share is external/);
   });
 
   it("carries secrets and configs into the sandbox, refusing a socket, a file outside the repository and the environment proofy runs in", () => {

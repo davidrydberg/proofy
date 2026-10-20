@@ -70,6 +70,11 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
         `Remove ${setting} from volume ${name} in the compose file proofy uses; a plain named volume, or driver: local, works`,
       ]);
     }
+    if (volume?.external !== undefined && volume.external !== false) {
+      throw new CliError(`Volume ${name} is external, which would mount a Docker volume from outside the sandbox`, "CONFIG_INVALID", [
+        `Remove external from volume ${name} in the compose file proofy uses; the sandbox starts it empty`,
+      ]);
+    }
   }
   const files: Record<string, Record<string, Record<string, unknown>>> = {};
   for (const kind of ["secrets", "configs"] as const) {
@@ -175,7 +180,8 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
   }
 
   const compose: Record<string, unknown> = { services, networks, ...files };
-  if (model.volumes) compose.volumes = model.volumes;
+  // Without a fixed name, compose names each volume after the sandbox, so none is shared with another project.
+  if (model.volumes) compose.volumes = Object.fromEntries(Object.entries(topVolumes).map(([name, volume]) => [name, volume && Object.fromEntries(Object.entries(volume).filter(([key]) => key !== "name"))]));
   return { compose, notes };
 }
 
@@ -267,6 +273,10 @@ function sealBreach(service: Service, repoDir: string, realPaths: Record<string,
   if (Array.isArray(service.cap_add) && service.cap_add.length > 0) return { setting: "cap_add", why: "give it powers beyond the sandbox's" };
   for (const key of ["pid", "ipc", "uts", "userns_mode"]) {
     if (service[key] === "host") return { setting: `${key}: host`, why: "share the host's namespace" };
+    if (typeof service[key] === "string" && service[key].startsWith("container:")) return { setting: `${key}: ${service[key]}`, why: "share the namespace of a container outside the sandbox" };
+  }
+  for (const entry of (service.volumes_from ?? []) as unknown[]) {
+    if (typeof entry === "string" && entry.startsWith("container:")) return { setting: `volumes_from ${entry}`, why: "give it the mounts of a container outside the sandbox" };
   }
   if (Array.isArray(service.devices) && service.devices.length > 0) return { setting: "devices", why: "give it the host's devices" };
   // The image build has internet, so a pull request's Dockerfile could use these to act as the person running proofy.
