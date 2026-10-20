@@ -101,9 +101,15 @@ export async function runCommand(args: string[], deps: Deps): Promise<CommandRes
   const runDir = join(outDir(paths), report.id);
   let posted: string | undefined;
   if (flags.booleans.has("post")) {
-    const target = pr ?? (await pullRequest(deps.proc, root));
-    deps.log(`posting the report on pull request #${target.number}`);
-    posted = await postReport(deps.proc, root, target, report, runDir, join(project.cacheDir, "post"));
+    // The run's verdict is the exit code, so a failed post is reported, never thrown.
+    try {
+      const target = pr ?? (await pullRequest(deps.proc, root));
+      deps.log(`posting the report on pull request #${target.number}`);
+      posted = await postReport(deps.proc, root, target, report, runDir, join(project.cacheDir, "post"));
+    } catch (error) {
+      const reason = error instanceof CliError ? [error.message, ...error.suggestions].join(": ") : String(error);
+      report = { ...report, notes: [...report.notes, `The report was not posted: ${reason}`] };
+    }
   }
   return runResult(report, runDir, root, posted);
 }
@@ -153,10 +159,13 @@ async function takeLock(paths: Paths): Promise<string> {
     await writeFile(file, String(process.pid), { flag: "wx" });
   } catch {
     const pid = Number(await readFile(file, "utf8").catch(() => "0"));
-    if (pid > 0 && alive(pid)) {
-      throw new CliError(`Another proofy run is in progress (process ${pid})`, "ENVIRONMENT_ERROR", ["Wait for it to finish; only one run at a time"]);
-    }
-    await writeFile(file, String(process.pid));
+    const busy = () => new CliError(`Another proofy run is in progress (process ${pid})`, "ENVIRONMENT_ERROR", ["Wait for it to finish; only one run at a time"]);
+    if (pid > 0 && alive(pid)) throw busy();
+    // Left by a run that died. Taken over exclusively, so a run that took it first in the meantime wins.
+    await rm(file, { force: true });
+    await writeFile(file, String(process.pid), { flag: "wx" }).catch(() => {
+      throw busy();
+    });
   }
   return file;
 }

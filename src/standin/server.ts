@@ -37,11 +37,17 @@ function serve(): void {
     appendFileSync(`${OUT}/dns.jsonl`, `${JSON.stringify({ at: new Date().toISOString(), name })}\n`);
   });
 
+  // One bad request must not take DNS and every fake down with it: an unhandled rejection would end the process.
   const listener = (secure: boolean) => async (req: IncomingMessage, res: ServerResponse) => {
-    const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
-    const body = await readBody(req);
-    const headers = Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : (value ?? "")]));
-    send(res, await standin.handle(host, req.method ?? "GET", req.url ?? "/", { ...headers, "x-proofy-scheme": secure ? "https" : "http" }, body));
+    try {
+      const host = (req.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+      const body = await readBody(req);
+      const headers = Object.fromEntries(Object.entries(req.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : (value ?? "")]));
+      send(res, await standin.handle(host, req.method ?? "GET", req.url ?? "/", { ...headers, "x-proofy-scheme": secure ? "https" : "http" }, body));
+    } catch (error) {
+      if (!res.headersSent && !res.destroyed) send(res, { status: 502, body: `proofy fake-service error: ${error instanceof Error ? error.message : String(error)}` });
+      else res.destroy();
+    }
   };
 
   createHttp(listener(false)).listen(80);

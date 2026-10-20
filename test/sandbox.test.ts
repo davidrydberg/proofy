@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config.js";
 import type { Proc } from "../src/sandbox/docker.js";
-import { prepare, resolveImages, runTests, sandboxProc, type Sandbox, type SandboxOptions } from "../src/sandbox/sandbox.js";
+import { prepare, resolveImages, runTests, sandboxProc, start, type Sandbox, type SandboxOptions } from "../src/sandbox/sandbox.js";
 
 function options(dir: string, config: Record<string, unknown>): SandboxOptions {
   return {
@@ -89,6 +89,23 @@ describe("sandbox", () => {
       { service: "db", image: "mariadb:11", id: "sha256:bbb", digest: "mariadb@sha256:ccc" },
       { service: "gone", image: "gone:1" },
     ]);
+  });
+
+  it("keeps the downloaded assets when a subnet overlap makes it prepare the sandbox again", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "proofy-retry-"));
+    const model = { services: { web: { image: "shop" } } };
+    let ups = 0;
+    const proc: Proc = async (_program, args) => {
+      if (args.includes("config")) return ok(JSON.stringify(model));
+      if (args.includes("up")) return ++ups === 1 ? { code: 1, stdout: "", stderr: "Pool overlaps with other one on this address space", timedOut: false } : ok();
+      return ok();
+    };
+    const prepared = await prepare(proc, options(dir, {}));
+    mkdirSync(join(prepared.workDir, "setup", "assets"), { recursive: true });
+    writeFileSync(join(prepared.workDir, "setup", "assets", "logo"), "png");
+    const started = await start(proc, options(dir, {}), prepared);
+    expect(ups).toBe(2);
+    expect(readFileSync(join(started.workDir, "setup", "assets", "logo"), "utf8")).toBe("png");
   });
 
   it("runs docker with only what it needs to reach the daemon, never the shell's other variables", async () => {

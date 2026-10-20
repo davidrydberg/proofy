@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import type { Config } from "../config.js";
 import type { Paths } from "../project.js";
@@ -64,33 +64,43 @@ async function composeHash(paths: Paths, config: Config): Promise<string> {
   return short(hash.digest("hex"));
 }
 
-// Editor backup and swap files.
-const LITTER = /(~|\.swp|\.swo)$/;
+// OS metadata and editor backups. Anything else, hidden or not, can be imported by a test or a fake, so it counts.
+const LITTER = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini)$|(~|\.swp|\.swo)$/;
 
-/**
- * Every file in a folder and its subfolders, relative to it and sorted. None when the folder is missing. Hidden files
- * and folders and editor backups are left out: OS and editor litter is never in another checkout.
- */
+/** Every file and symlink in a folder and its subfolders, relative to it and sorted. None when the folder is missing. */
 async function filesIn(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { recursive: true, withFileTypes: true });
     return entries
-      .filter((entry) => entry.isFile())
+      .filter((entry) => entry.isFile() || entry.isSymbolicLink())
       .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
-      .filter((file) => !file.split(sep).some((part) => part.startsWith(".")) && !LITTER.test(file))
+      .filter((file) => !LITTER.test(file.split(sep).join("/")))
       .sort();
   } catch {
     return [];
   }
 }
 
-/** Names and contents together, so renaming or moving a file is a change too. */
-async function hashFiles(dir: string, files: string[], extra = ""): Promise<string> {
+/**
+ * Names and contents together, so renaming or moving a file is a change too. A symlink counts by its target, and a
+ * symlinked folder by everything in it.
+ */
+async function hashFiles(dir: string, files: string[], extra = "", seen = new Set<string>()): Promise<string> {
   const hash = createHash("sha256");
   hash.update(extra);
   for (const file of files) {
+    const path = join(dir, file);
     hash.update(`${file}\n`);
-    hash.update(await readFile(join(dir, file)));
+    const target = await readlink(path).catch(() => undefined);
+    if (target !== undefined) hash.update(`-> ${target}\n`);
+    const real = await realpath(path).catch(() => undefined);
+    if (real !== undefined && (await stat(real).catch(() => undefined))?.isDirectory()) {
+      if (seen.has(real)) continue;
+      seen.add(real);
+      hash.update(await hashFiles(real, await filesIn(real), "", seen));
+    } else {
+      hash.update(await readFile(path).catch(() => "unreadable"));
+    }
   }
   return short(hash.digest("hex"));
 }
