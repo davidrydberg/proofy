@@ -5,7 +5,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { answer, parseQuery } from "../src/standin/dns.js";
-import { Standin } from "../src/standin/handle.js";
+import { adminResponse, Standin, type Admin } from "../src/standin/handle.js";
 
 function query(name: string, type: number): Buffer {
   const labels = name.split(".").flatMap((label) => [Buffer.from([label.length]), Buffer.from(label)]);
@@ -67,6 +67,23 @@ describe("fake-service container", () => {
     const last = standin.recordedFor("track.test").at(-1)!;
     expect(last).toMatchObject({ method: "POST", path: "/v1/x", query: { a: "1" }, body: '{"a":1}' });
     expect(last.headers).toMatchObject({ authorization: "(redacted)", "x-api-key": "(redacted)", "x-request-token": "(redacted)", accept: "json" });
+  });
+
+  it("answers the admin port only with the sandbox token, and resets only in a dev sandbox", () => {
+    let resets = 0;
+    const admin = (dev: boolean): Admin => ({ token: "t0k3n", dev, requests: (host) => standin.recordedFor(host), reset: () => resets++ });
+    const bearer = "Bearer t0k3n";
+    expect(adminResponse(admin(false), "GET", "/health", undefined)).toEqual({ status: 200, json: { ok: true } });
+    for (const authorization of [undefined, "", "Bearer wrong", "Bearer t0k3", "Bearer t0k3nn", "t0k3n", "Basic cHJvb2Z5OnQwazNu"]) {
+      expect(adminResponse(admin(true), "GET", "/requests?host=track.test", authorization).status, String(authorization)).toBe(401);
+      expect(adminResponse(admin(true), "POST", "/reset", authorization).status, String(authorization)).toBe(401);
+    }
+    expect(adminResponse(admin(false), "GET", "/requests?host=track.test", bearer)).toEqual({ status: 200, json: standin.recordedFor("track.test") });
+    expect(adminResponse(admin(false), "POST", "/reset", bearer)).toMatchObject({ status: 403, json: { error: "reset works only in a dev sandbox" } });
+    expect(resets).toBe(0);
+    expect(adminResponse(admin(true), "POST", "/reset", bearer)).toEqual({ status: 200, json: { ok: true } });
+    expect(resets).toBe(1);
+    expect(adminResponse(admin(true), "GET", "/other", bearer).status).toBe(404);
   });
 
   it("after a reset runs the fakes as they are now, with every file they import, empty state and no earlier requests", () => {

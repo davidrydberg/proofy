@@ -6,7 +6,8 @@ import { CliError } from "../errors.js";
 import { exists, flowNames } from "../project.js";
 import { finishRun, logOffsets, planFlows, reserveRunId, sandboxOptions, testsInSandbox, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
-import { compose, forwardedPorts, installImages, prepare, resetFakes, resolveImages, sandboxProc, saveLogs, start, stop, type Sandbox, type ServiceImage } from "../sandbox/sandbox.js";
+import { MAIL_USER } from "../sandbox/contract.js";
+import { compose, forwardedPorts, installImages, prepare, resetFakes, resolveImages, sandboxProc, sandboxToken, saveLogs, start, stop, type Sandbox, type ServiceImage } from "../sandbox/sandbox.js";
 import { loadProject, projectName, workingTreeInfo, type Project } from "./context.js";
 import { runResult } from "./run.js";
 import type { CommandResult } from "./types.js";
@@ -24,7 +25,8 @@ examples:
   proofy dev down
 `;
 
-interface DevState extends Sandbox {
+// Kept in e2e/out, which the app may mount, so it holds no token.
+interface DevState extends Omit<Sandbox, "token"> {
   startedAt: string;
   urls: { app?: string; mail?: string };
   /** Missing in a state file written before proofy recorded images. */
@@ -87,7 +89,7 @@ function context(deps: Deps, project: Project, sourceInfo: RunContext["sourceInf
 async function devUp(deps: Deps, project: Project): Promise<CommandResult> {
   const existing = await readState(project);
   if (existing && (await running(deps, existing))) {
-    return upResult(existing, true);
+    return upResult(existing, await sandboxToken(existing), true);
   }
   const ctx = context(deps, project, {});
   const options = sandboxOptions(ctx, "dev", projectName(project.root, "dev"), outDir(project.paths));
@@ -103,17 +105,20 @@ async function devUp(deps: Deps, project: Project): Promise<CommandResult> {
     await stop(docker, sandbox);
     throw error;
   }
-  const state: DevState = { ...sandbox, startedAt: deps.now().toISOString(), urls: await forwardedPorts(docker, sandbox), images };
+  const { token, ...kept } = sandbox;
+  const state: DevState = { ...kept, startedAt: deps.now().toISOString(), urls: await forwardedPorts(docker, sandbox), images };
   await writeFile(stateFile(project), `${JSON.stringify(state, null, 2)}\n`);
-  return upResult(state, false);
+  return upResult(state, token, false);
 }
 
-function upResult(state: DevState, already: boolean): CommandResult {
+function upResult(state: DevState, token: string | undefined, already: boolean): CommandResult {
+  // Mailpit asks for its login; in the address, the browser sends it.
+  const mail = state.urls.mail && token ? state.urls.mail.replace("http://", `http://${MAIL_USER}:${token}@`) : (state.urls.mail ?? "not forwarded");
   const help = [
     "Run `proofy dev test <flow>` to run a flow in it; three identical runs make it ready to approve",
     "Run `proofy dev down` when done",
   ];
-  const data: Record<string, unknown> = { sandbox: state.project, status: already ? "already running" : "started", app: state.urls.app ?? "not forwarded", mailpit: state.urls.mail ?? "not forwarded" };
+  const data: Record<string, unknown> = { sandbox: state.project, status: already ? "already running" : "started", app: state.urls.app ?? "not forwarded", mailpit: mail };
   if (state.notes.length > 0) data.notes = state.notes;
   return {
     data,
@@ -122,7 +127,7 @@ function upResult(state: DevState, already: boolean): CommandResult {
       [
         `dev sandbox ${state.project} ${already ? "already running" : "started"}, sealed`,
         `  app      ${state.urls.app ?? "not forwarded"}  (links inside the app may use its in-sandbox name)`,
-        `  mailpit  ${state.urls.mail ?? "not forwarded"}`,
+        `  mailpit  ${mail}`,
         ...state.notes.map((note) => `  note: ${note}`),
         "",
         "NEXT",
@@ -133,10 +138,16 @@ function upResult(state: DevState, already: boolean): CommandResult {
 }
 
 async function devTest(deps: Deps, project: Project, names: string[], extra: string[]): Promise<CommandResult> {
-  const state = await readState(project);
-  if (!state || !(await running(deps, state))) {
+  const saved = await readState(project);
+  if (!saved || !(await running(deps, saved))) {
     throw new CliError("The dev sandbox is not running", "VALIDATION_ERROR", ["Run `proofy dev up` first"]);
   }
+  // A sandbox prepared before sandboxes had a token: its fake-service container and Mailpit do not ask for one.
+  const token = await sandboxToken(saved);
+  if (!token) {
+    throw new CliError("The dev sandbox was started by an older proofy", "VALIDATION_ERROR", ["Run `proofy dev down`, then `proofy dev up`"]);
+  }
+  const state = { ...saved, token };
   const available = await flowNames(project.paths);
   const withTests: string[] = [];
   for (const name of available) if (await exists(join(project.paths.tests, `${name}.spec.ts`))) withTests.push(name);

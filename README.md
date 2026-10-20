@@ -9,8 +9,10 @@ The sandbox has no way out.
 Every outside call to a hostname goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused.
 The report lists every HTTP and HTTPS call, and every name the app looked up without calling it over HTTP; calls to a raw IP address reach nothing and are not listed.
 The app's settings come only from `e2e/proofy.json` and the compose files, never from your shell's environment or a `.env` file.
-proofy refuses a compose variable that would be blank where it reaches the app, and any use of a variable docker itself needs (`PATH`, `HOME`, `DOCKER_*`, `XDG_RUNTIME_DIR`), even with a default.
-proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, `build.ssh`, `build.secrets`, `build.privileged`, `build.entitlements`, a build context or `build.additional_contexts` folder outside the repository, a volume with `driver_opts` or a `driver` other than `local`, or a mount of the Docker or containerd socket, also as a secret or config file.
+proofy refuses a compose variable that would be blank where it reaches the app, and any use of a variable docker itself needs (`PATH`, `HOME`, `DOCKER_*`, `BUILDX_*`, `XDG_RUNTIME_DIR`, and `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and `ALL_PROXY` in either case), even with a default; only an image build may take a proxy variable, in `build.args`.
+proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a `pid`, `ipc`, `uts` or `userns_mode` of the host or a `container:`, `volumes_from` a `container:`, `devices`, `build.ssh`, `build.secrets`, `build.privileged`, `build.entitlements`, a build context, `build.additional_contexts` folder, bind mount, secret or config file outside the repository (symlinks resolved), a volume that is `external` or sets `driver_opts` or a `driver` other than `local`, or a mount of the Docker or containerd socket, also as a secret or config file.
+A volume's fixed `name` is dropped, so the sandbox never reuses or deletes a volume of the app's own.
+The app cannot read or erase the evidence: the fakes' recorded calls and Mailpit's API answer only the tests, with a token new for every sandbox.
 
 ![How proofy works: you describe a test, your agent writes requirements, a test and fakes, you approve, every run is sealed in Docker, and the report shows evidence per requirement](docs/overview.gif)
 

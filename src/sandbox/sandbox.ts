@@ -1,14 +1,14 @@
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import type { Config } from "../config.js";
 import { CliError } from "../errors.js";
 import { ADMIN_PORT, MOUNT, RUNNER, STANDIN } from "./contract.js";
-import { localContexts, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
+import { hostPaths, PROXY_VARIABLES, sandboxCompose, subnetFor, unsetUses, type Mode, type UnsetUse } from "./compose.js";
 import { tail, type Proc } from "./docker.js";
 import { composeSources } from "./sources.js";
 
@@ -39,6 +39,11 @@ export interface Sandbox {
   notes: string[];
   /** The image reference each sealed compose service runs, by service name. */
   imageRefs: Record<string, string>;
+  /**
+   * The fake-service container's admin token and Mailpit's password, new for every sandbox. App services never see it,
+   * and it is kept only in the sandbox's own folder, outside the repository: sandboxToken reads it back.
+   */
+  token: string;
 }
 
 /** The image a service ran, as resolved on this machine. */
@@ -51,13 +56,29 @@ export interface ServiceImage {
   digest?: string;
 }
 
-// What docker needs to reach the daemon and its own settings. Compose interpolates ${VAR} in the app's compose files
-// from its environment, so anything more would let the shell running proofy reach the app.
-const DOCKER_ENV = ["PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "XDG_RUNTIME_DIR"];
+// What docker needs to reach the daemon, its own settings, the proxy and the image builder, plus every BUILDX_ variable.
+// Compose interpolates ${VAR} in the app's compose files from its environment, so anything more would let the shell
+// running proofy reach the app.
+const DOCKER_ENV = [
+  "PATH",
+  "HOME",
+  "DOCKER_HOST",
+  "DOCKER_CONFIG",
+  "DOCKER_CONTEXT",
+  "DOCKER_CERT_PATH",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_BUILDKIT",
+  "XDG_RUNTIME_DIR",
+  ...PROXY_VARIABLES,
+];
+
+function dockerVariable(name: string): boolean {
+  return DOCKER_ENV.includes(name) || name.startsWith("BUILDX_");
+}
 
 /** Runs every program with only the variables docker needs, so the app's settings come only from e2e/proofy.json and the compose files. */
 export function sandboxProc(proc: Proc, env: NodeJS.ProcessEnv): Proc {
-  const minimal = Object.fromEntries(DOCKER_ENV.flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])));
+  const minimal = Object.fromEntries(Object.entries(env).filter(([name, value]) => value !== undefined && dockerVariable(name)));
   return (program, args, options = {}) => proc(program, args, { ...options, env: minimal });
 }
 
@@ -157,26 +178,55 @@ export async function prepare(proc: Proc, options: SandboxOptions, attempt = 0):
   const model = JSON.parse(normalized.stdout) as Record<string, unknown>;
   const raw = await proc("docker", [...args, "config", "--format", "json", "--no-interpolate"]);
   if (raw.code !== 0) throw new CliError(`docker compose could not read ${config.compose.join(", ")}`, "CONFIG_INVALID", [tail(raw.stderr, 8)]);
-  refuseVariables(unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset, DOCKER_ENV));
-  // A symlinked build context is read where it points, so the seal compares real paths.
+  refuseVariables(unsetUses(JSON.parse(raw.stdout) as Record<string, unknown>, model, config, unset, dockerVariable));
+  // A symlinked host path is read where it points, so the seal compares real paths.
   const realPaths: Record<string, string> = {};
-  for (const path of [options.repoDir, ...localContexts(model, options.repoDir)]) {
-    await realpath(path).then((real) => (realPaths[path] = real), () => undefined);
+  for (const path of [options.repoDir, ...hostPaths(model, options.repoDir)]) {
+    const real = await realPathOf(path);
+    if (real !== undefined) realPaths[path] = real;
   }
   const { subnet, standinIp } = subnetFor(options.project, attempt);
-  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), repoDir: options.repoDir, realPaths, user: hostUser(), dirs });
+  const token = randomBytes(16).toString("hex");
+  const generated = sandboxCompose({ model, config, mode: options.mode, subnet, standinIp, standinImage: standinImage(), runnerImage: runnerImage(), repoDir: options.repoDir, realPaths, token, user: hostUser(), dirs });
   const composeFile = join(workDir, "compose.yml");
   await writeFile(composeFile, stringify(generated.compose));
   const assets = Object.fromEntries(config.assets.map((url) => [assetKey(url), assetFile(url)]));
   await writeFile(
     join(dirs.runSetup, "standin.json"),
-    JSON.stringify({ hosts: config.hosts, assets, address: standinIp, standinsDir: `${MOUNT.e2e}/standins`, assetsDir: `${MOUNT.runSetup}/assets` }),
+    JSON.stringify({ hosts: config.hosts, assets, address: standinIp, standinsDir: `${MOUNT.e2e}/standins`, assetsDir: `${MOUNT.runSetup}/assets`, token, dev: options.mode === "dev" }),
   );
   // Compose names a built image without an image key <project>-<service>.
   const imageRefs = Object.fromEntries(
     Object.entries(generated.compose.services as Record<string, { image?: string }>).map(([name, service]) => [name, service.image ?? `${options.project}-${name}`]),
   );
-  return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs };
+  return { project: options.project, composeFile, workDir, notes: generated.notes, imageRefs, token };
+}
+
+/** The token of a sandbox prepared earlier, from its setup folder. Undefined for one prepared by a proofy without tokens. */
+export async function sandboxToken(sandbox: Pick<Sandbox, "workDir">): Promise<string | undefined> {
+  try {
+    const { token } = JSON.parse(await readFile(join(sandbox.workDir, "setup", "standin.json"), "utf8")) as { token?: unknown };
+    return typeof token === "string" && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The real path of a host path, symlinks resolved. Docker creates a missing bind mount source, so a path that does not
+ * exist yet resolves through the folders above it that do, and a symlink to a missing path through where it points.
+ * Undefined for a symlink loop, which docker cannot mount either.
+ */
+async function realPathOf(path: string, hops = 0): Promise<string | undefined> {
+  const real = await realpath(path).catch(() => undefined);
+  if (real !== undefined || hops > 40) return real;
+  const parent = dirname(path);
+  if (parent === path) return undefined;
+  const realParent = await realPathOf(parent, hops);
+  if (realParent === undefined) return undefined;
+  const here = join(realParent, basename(path));
+  const target = await readlink(here).catch(() => undefined);
+  return target === undefined ? here : realPathOf(resolve(realParent, target), hops + 1);
 }
 
 // Compose's warning for a ${VAR} it replaced with an empty value. Worded otherwise, it matches nothing and the value
@@ -193,7 +243,7 @@ function refuseVariables(uses: UnsetUse[]): void {
     ...uses.map((use) =>
       use.path[0] === "services" && use.path[2] === "environment"
         ? `Set ${use.path[3]} for service ${use.path[1]} in e2e/proofy.json env`
-        : DOCKER_ENV.includes(use.name)
+        : dockerVariable(use.name)
           ? `Replace \${${use.name}} with a fixed value in the compose file: docker needs ${use.name}, so it comes from the machine running proofy, default or not`
           : `Give ${use.name} a default in the compose file, such as \${${use.name}:-value}`,
     ),
@@ -277,18 +327,18 @@ export async function runTests(proc: Proc, options: SandboxOptions, sandbox: San
 /** Gives the fake-service container a fresh start for a dev test: current fakes, empty state, no earlier calls. */
 export async function resetFakes(proc: Proc, sandbox: Sandbox): Promise<void> {
   await must(
-    proc("docker", [...compose(sandbox), "exec", "-T", STANDIN, "wget", "-q", "-O", "-", "--post-data", "", `http://127.0.0.1:${ADMIN_PORT}/reset`]),
+    proc("docker", [...compose(sandbox), "exec", "-T", STANDIN, "wget", "-q", "-O", "-", "--header", `Authorization: Bearer ${sandbox.token}`, "--post-data", "", `http://127.0.0.1:${ADMIN_PORT}/reset`]),
     "Resetting the fake-service container failed",
   );
 }
 
-export async function saveLogs(proc: Proc, sandbox: Sandbox, dir: string): Promise<void> {
+export async function saveLogs(proc: Proc, sandbox: Pick<Sandbox, "project" | "composeFile">, dir: string): Promise<void> {
   const logs = await proc("docker", [...compose(sandbox), "logs", "--no-color", "--timestamps"]);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "sandbox.log"), logs.stdout + logs.stderr);
 }
 
-export async function stop(proc: Proc, sandbox: Sandbox): Promise<void> {
+export async function stop(proc: Proc, sandbox: Pick<Sandbox, "project" | "composeFile">): Promise<void> {
   await proc("docker", [...compose(sandbox), "down", "-v", "--remove-orphans", "--timeout", "5"], { timeoutMs: 120_000 });
 }
 
