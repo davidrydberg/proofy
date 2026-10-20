@@ -51,7 +51,6 @@ guest-checkout  passed
 
 Exit codes: 0 pass, 1 an approved flow failed, 2 usage or config, 3 the sandbox failed, 4 not approved.
 `examples/woocommerce` is a complete shop with two flows, and [pull request 1](https://github.com/davidrydberg/proofy/pull/1) shows a report posted with `--post`.
-`prd.md` has the full design.
 
 The agent instructions say only you run `proofy approve`.
 That is a rule your agent follows, not a lock.
