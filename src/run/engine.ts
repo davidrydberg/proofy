@@ -6,7 +6,7 @@ import type { Paths } from "../project.js";
 import { MOUNT } from "../sandbox/contract.js";
 import type { Proc } from "../sandbox/docker.js";
 import { baseUrl } from "../sandbox/compose.js";
-import { installImages, prepare, resolveImages, runTests, saveLogs, start, stop, type Sandbox, type SandboxOptions, type ServiceImage } from "../sandbox/sandbox.js";
+import { installImages, prepare, resolveImages, runTests, sandboxProc, saveLogs, start, stop, type Sandbox, type SandboxOptions, type ServiceImage } from "../sandbox/sandbox.js";
 import type { Approvals } from "./approvals.js";
 import { changedParts, fingerprint, sameFingerprint } from "./fingerprint.js";
 import { outDir, pruneRuns } from "./history.js";
@@ -55,7 +55,6 @@ export function sandboxOptions(ctx: RunContext, mode: "run" | "dev", project: st
     mode,
     project,
     cacheDir: ctx.cacheDir,
-    env: ctx.env,
     log: ctx.log,
   };
 }
@@ -66,28 +65,29 @@ export async function sealedRun(ctx: RunContext, planned: PlannedFlow[], options
   const runDir = join(outDir(ctx.base), id);
   const startedAt = ctx.now().toISOString();
   const sandboxOpts = sandboxOptions(ctx, "run", options.project, runDir);
+  const docker = sandboxProc(ctx.proc, ctx.env);
   let sandbox: Sandbox | undefined;
   let environmentError: string | undefined;
   let images: ServiceImage[] | undefined;
   const notes: string[] = [];
   try {
-    sandbox = await prepare(ctx.proc, sandboxOpts);
+    sandbox = await prepare(docker, sandboxOpts);
     notes.push(...sandbox.notes);
-    await installImages(ctx.proc, sandboxOpts, sandbox);
-    images = await resolveImages(ctx.proc, sandbox);
-    sandbox = await start(ctx.proc, sandboxOpts, sandbox);
+    await installImages(docker, sandboxOpts, sandbox);
+    images = await resolveImages(docker, sandbox);
+    sandbox = await start(docker, sandboxOpts, sandbox);
     await testsInSandbox(ctx, sandbox, planned, []);
   } catch (error) {
     if (!(error instanceof CliError) || error.code !== "ENVIRONMENT_ERROR") throw error;
     environmentError = [error.message, ...error.suggestions].join("\n");
   } finally {
     if (sandbox) {
-      await saveLogs(ctx.proc, sandbox, runDir);
+      await saveLogs(docker, sandbox, runDir);
       if (options.keep) {
         notes.push(`Sandbox kept running: docker compose -p ${sandbox.project} -f ${sandbox.composeFile} down -v`);
       } else {
         ctx.log("tearing down the sandbox");
-        await stop(ctx.proc, sandbox);
+        await stop(docker, sandbox);
       }
     }
   }
@@ -102,7 +102,7 @@ export async function testsInSandbox(ctx: RunContext, sandbox: Sandbox, planned:
   }
   await writeFile(join(sandbox.workDir, "runner", "playwright.config.mjs"), playwrightConfig(ctx.config, planned.map((flow) => flow.name)));
   ctx.log(`running ${planned.map((flow) => flow.name).join(", ")}`);
-  await runTests(ctx.proc, sandboxOptions(ctx, "run", sandbox.project, out), sandbox, extraArgs);
+  await runTests(sandboxProc(ctx.proc, ctx.env), sandboxOptions(ctx, "run", sandbox.project, out), sandbox, extraArgs);
 }
 
 export async function finishRun(

@@ -55,12 +55,39 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     }
   }
 
+  const topVolumes = (model.volumes ?? {}) as Record<string, Record<string, unknown> | null>;
+  for (const [name, volume] of Object.entries(topVolumes)) {
+    const setting = ["driver", "driver_opts"].find((key) => volume?.[key] !== undefined);
+    if (setting) {
+      throw new CliError(`Volume ${name} sets ${setting}, which could mount a host folder or a network share into the sandbox`, "CONFIG_INVALID", [
+        `Remove ${setting} from volume ${name} in the compose file proofy uses; a plain named volume works`,
+      ]);
+    }
+  }
+  const files: Record<string, Record<string, Record<string, unknown>>> = {};
+  for (const kind of ["secrets", "configs"] as const) {
+    const entries = (model[kind] ?? {}) as Record<string, Record<string, unknown>>;
+    for (const [name, entry] of Object.entries(entries)) {
+      if (typeof entry.environment === "string") {
+        throw new CliError(`${kind}.${name} reads the variable ${entry.environment} from the environment proofy runs in, which the sandbox never uses`, "CONFIG_INVALID", [
+          `Give ${kind}.${name} a file${kind === "configs" ? " or content" : ""} with a sandbox value in the compose file proofy uses`,
+        ]);
+      }
+      if (typeof entry.file === "string" && exposesSocket(entry.file)) {
+        throw new CliError(`${kind}.${name} mounts ${entry.file}, which would let a service control Docker on the host`, "CONFIG_INVALID", [
+          `Remove ${kind}.${name} from the compose file proofy uses`,
+        ]);
+      }
+    }
+    if (Object.keys(entries).length > 0) files[kind] = entries;
+  }
+
   for (const [name, original] of Object.entries(userServices)) {
     if (name.startsWith("proofy-") || name === MAILPIT) {
       throw new CliError(`The compose service name "${name}" is reserved by proofy`, "CONFIG_INVALID", ["Rename the service in your compose file"]);
     }
     const service: Service = { ...original };
-    const breach = sealBreach(service, (model.volumes ?? {}) as Record<string, unknown>);
+    const breach = sealBreach(service);
     if (breach) {
       throw new CliError(`Service ${name} sets ${breach.setting}, which would ${breach.why}`, "CONFIG_INVALID", [
         `Remove ${breach.setting} from the compose file proofy uses`,
@@ -74,9 +101,11 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     delete service.container_name;
     service.networks = { proofy: { aliases: aliasesOf(original.networks) } };
     service.dns = [inputs.standinIp];
-    const environment = { ...((original.environment ?? {}) as Record<string, string | null>), ...(config.env[name] ?? {}) };
-    service.environment = environment;
-    service.volumes = [...((original.volumes ?? []) as unknown[]), { type: "bind", source: dirs.ca, target: MOUNT.appCa, read_only: true }];
+    // Compose interpolates the file it starts, so a $ in a config value stays literal only as $$. Values from the app's
+    // own compose files are already escaped that way by docker compose config.
+    const settings = Object.fromEntries(Object.entries(config.env[name] ?? {}).map(([key, value]) => [key, literal(value)]));
+    service.environment = { ...((original.environment ?? {}) as Record<string, string | null>), ...settings };
+    service.volumes = [...((original.volumes ?? []) as unknown[]), bind(dirs.ca, MOUNT.appCa, true)];
     service.depends_on = { ...((original.depends_on ?? {}) as Record<string, unknown>), [STANDIN]: { condition: "service_healthy", required: true } };
     services[name] = service;
   }
@@ -104,7 +133,7 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     shm_size: "1gb",
     dns: [inputs.standinIp],
     networks: { proofy: {} },
-    environment: { CI: "1", HOME: "/tmp", PROOFY_BASE_URL: baseUrl(config), PROOFY_START_MS: String(config.limits.startMinutes * 60_000) },
+    environment: { CI: "1", HOME: "/tmp", PROOFY_BASE_URL: literal(baseUrl(config)), PROOFY_START_MS: String(config.limits.startMinutes * 60_000) },
     volumes: [
       bind(dirs.work, MOUNT.work, false),
       bind(dirs.pkg, MOUNT.pkg, true),
@@ -128,13 +157,63 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
     networks["proofy-host"] = {};
   }
 
-  const compose: Record<string, unknown> = { services, networks };
+  const compose: Record<string, unknown> = { services, networks, ...files };
   if (model.volumes) compose.volumes = model.volumes;
   return { compose, notes };
 }
 
 export function baseUrl(config: Config): string {
   return config.app ? `http://${config.app.service}:${config.app.port}${config.app.path}` : "";
+}
+
+export interface UnsetUse {
+  name: string;
+  /** Where the compose model uses it, such as services.web.environment.KEY. */
+  path: string[];
+}
+
+// Service settings proofy drops, so a variable used only there needs no value.
+const DROPPED = new Set(["ports", "container_name", "env_file"]);
+
+/**
+ * Where the compose files use a variable that has no value in the sandbox, leaving out uses that never reach it: a
+ * setting proofy drops or replaces, an e2e/proofy.json env value that overrides it, or a service, volume, secret or
+ * config the app does not use. `raw` is the model before interpolation, `model` after. A variable compose reported
+ * that is found nowhere is returned with an empty path, so it is never silently blank.
+ */
+export function unsetUses(raw: Record<string, unknown>, model: Record<string, unknown>, config: Config, names: string[]): UnsetUse[] {
+  const found = new Map<string, UnsetUse[]>(names.map((name) => [name, []]));
+  const visit = (value: unknown, path: string[]) => {
+    if (typeof value === "string") {
+      // $$ is a literal dollar sign, never a variable.
+      const text = value.replace(/\$\$/g, "");
+      for (const name of names) {
+        if (new RegExp(`\\$\\{${name}\\}|\\$${name}(?![A-Za-z0-9_])`).test(text)) found.get(name)?.push({ name, path: settingPath(path, value) });
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, [...path, String(index)]));
+    } else if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) visit(item, [...path, key]);
+    }
+  };
+  visit(raw, []);
+  const reaches = ({ path }: UnsetUse) => {
+    const [section = "", entry = "", setting = "", key = ""] = path;
+    if (!["services", "volumes", "secrets", "configs"].includes(section)) return false;
+    if ((model[section] as Record<string, unknown> | undefined)?.[entry] === undefined) return false;
+    if (section !== "services") return true;
+    if (DROPPED.has(setting)) return false;
+    return !(setting === "environment" && config.env[entry]?.[key] !== undefined);
+  };
+  return [...found].flatMap(([name, uses]) => (uses.length === 0 ? [{ name, path: [] }] : uses.filter(reaches)));
+}
+
+// An environment entry in list form, "KEY=value", is named by its key like the map form.
+function settingPath(path: string[], value: string): string[] {
+  if (path[0] === "services" && path[2] === "environment" && path.length === 4 && /^\d+$/.test(path[3] ?? "")) {
+    return [...path.slice(0, 3), value.split("=")[0] ?? ""];
+  }
+  return path;
 }
 
 /** A /24 per project, away from the ranges Docker and home networks usually take. */
@@ -154,7 +233,7 @@ const SOCKET_NAME = /(^|\/)(docker|containerd|podman)\.sock$/;
 const ROOTLESS = /^(\/var)?\/run\/user(\/\d+)?$/;
 
 /** The first service setting that would let the service out of the sealed sandbox. */
-function sealBreach(service: Service, topVolumes: Record<string, unknown>): { setting: string; why: string } | undefined {
+function sealBreach(service: Service): { setting: string; why: string } | undefined {
   if (service.network_mode !== undefined) return { setting: "network_mode", why: "bypass the sealed network" };
   if (service.privileged === true) return { setting: "privileged", why: "give it the host's devices and network controls" };
   if (Array.isArray(service.cap_add) && service.cap_add.length > 0) return { setting: "cap_add", why: "give it powers beyond the sandbox's" };
@@ -162,24 +241,16 @@ function sealBreach(service: Service, topVolumes: Record<string, unknown>): { se
     if (service[key] === "host") return { setting: `${key}: host`, why: "share the host's namespace" };
   }
   if (Array.isArray(service.devices) && service.devices.length > 0) return { setting: "devices", why: "give it the host's devices" };
+  // The image build has internet, so a pull request's Dockerfile could use these to act as the person running proofy.
+  const build = (service.build ?? {}) as { ssh?: unknown; secrets?: unknown };
+  if (Array.isArray(build.ssh) && build.ssh.length > 0) return { setting: "build.ssh", why: "give the image build the SSH agent of the person running proofy" };
+  if (Array.isArray(build.secrets) && build.secrets.length > 0) return { setting: "build.secrets", why: "give the image build secrets from the host" };
   for (const volume of (service.volumes ?? []) as unknown[]) {
-    const mount = hostMount(volume, topVolumes);
-    if (mount && exposesSocket(mount.source)) return { setting: mount.setting, why: "let it control Docker on the host" };
+    if (!volume || typeof volume !== "object") continue;
+    const { type, source } = volume as { type?: unknown; source?: unknown };
+    if (type === "bind" && typeof source === "string" && exposesSocket(source)) return { setting: `a bind mount of ${source}`, why: "let it control Docker on the host" };
   }
   return undefined;
-}
-
-/** The host folder a service volume shows: a bind mount, or a named volume whose driver options bind a host path. */
-function hostMount(volume: unknown, topVolumes: Record<string, unknown>): { source: string; setting: string } | undefined {
-  if (!volume || typeof volume !== "object") return undefined;
-  const { type, source } = volume as { type?: unknown; source?: unknown };
-  if (typeof source !== "string") return undefined;
-  if (type === "bind") return { source, setting: `a bind mount of ${source}` };
-  if (type !== "volume") return undefined;
-  const options = (topVolumes[source] as { driver_opts?: { o?: unknown; device?: unknown } } | null | undefined)?.driver_opts;
-  if (typeof options?.o !== "string" || typeof options.device !== "string") return undefined;
-  if (!options.o.split(",").some((option) => ["bind", "rbind"].includes(option.trim()))) return undefined;
-  return { source: options.device, setting: `volume ${source}, a bind mount of ${options.device}` };
 }
 
 function exposesSocket(source: string): boolean {
@@ -199,5 +270,9 @@ function aliasesOf(networks: unknown): string[] {
 }
 
 function bind(source: string, target: string, readOnly: boolean): Record<string, unknown> {
-  return { type: "bind", source, target, read_only: readOnly };
+  return { type: "bind", source: literal(source), target, read_only: readOnly };
+}
+
+function literal(value: string): string {
+  return value.replace(/\$/g, () => "$$");
 }

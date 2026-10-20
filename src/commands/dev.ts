@@ -6,7 +6,7 @@ import { CliError } from "../errors.js";
 import { exists, flowNames } from "../project.js";
 import { finishRun, logOffsets, planFlows, reserveRunId, sandboxOptions, testsInSandbox, type RunContext } from "../run/engine.js";
 import { outDir } from "../run/history.js";
-import { compose, forwardedPorts, installImages, prepare, resolveImages, saveLogs, start, stop, type Sandbox, type ServiceImage } from "../sandbox/sandbox.js";
+import { compose, forwardedPorts, installImages, prepare, resetFakes, resolveImages, sandboxProc, saveLogs, start, stop, type Sandbox, type ServiceImage } from "../sandbox/sandbox.js";
 import { loadProject, projectName, workingTreeInfo, type Project } from "./context.js";
 import { runResult } from "./run.js";
 import type { CommandResult } from "./types.js";
@@ -64,7 +64,7 @@ async function readState(project: Project): Promise<DevState | undefined> {
 }
 
 async function running(deps: Deps, state: DevState): Promise<boolean> {
-  const result = await deps.proc("docker", [...compose(state), "ps", "--status", "running", "-q"]);
+  const result = await sandboxProc(deps.proc, deps.env)("docker", [...compose(state), "ps", "--status", "running", "-q"]);
   return result.code === 0 && result.stdout.trim().length > 0;
 }
 
@@ -90,18 +90,19 @@ async function devUp(deps: Deps, project: Project): Promise<CommandResult> {
   }
   const ctx = context(deps, project, {});
   const options = sandboxOptions(ctx, "dev", projectName(project.root, "dev"), outDir(project.paths));
-  let sandbox = await prepare(deps.proc, options);
+  const docker = sandboxProc(deps.proc, deps.env);
+  let sandbox = await prepare(docker, options);
   let images: ServiceImage[];
   try {
-    await installImages(deps.proc, options, sandbox);
-    images = await resolveImages(deps.proc, sandbox);
-    sandbox = await start(deps.proc, options, sandbox);
+    await installImages(docker, options, sandbox);
+    images = await resolveImages(docker, sandbox);
+    sandbox = await start(docker, options, sandbox);
   } catch (error) {
-    await saveLogs(deps.proc, sandbox, outDir(project.paths));
-    await stop(deps.proc, sandbox);
+    await saveLogs(docker, sandbox, outDir(project.paths));
+    await stop(docker, sandbox);
     throw error;
   }
-  const state: DevState = { ...sandbox, startedAt: deps.now().toISOString(), urls: await forwardedPorts(deps.proc, sandbox), images };
+  const state: DevState = { ...sandbox, startedAt: deps.now().toISOString(), urls: await forwardedPorts(docker, sandbox), images };
   await writeFile(stateFile(project), `${JSON.stringify(state, null, 2)}\n`);
   return upResult(state, false);
 }
@@ -147,6 +148,8 @@ async function devTest(deps: Deps, project: Project, names: string[], extra: str
   if (chosen.length === 0) throw new CliError("No flow has a test yet", "VALIDATION_ERROR", ["Ask your agent to write one (step 4 in e2e/AGENTS.md)"]);
   const ctx = context(deps, project, await workingTreeInfo(deps, project.root));
   const planned = await planFlows(ctx, chosen);
+  // Each dev test runs the fakes as they are now, with empty state, and reports only its own calls.
+  await resetFakes(sandboxProc(deps.proc, deps.env), state);
   const id = await reserveRunId(ctx);
   const startedAt = deps.now().toISOString();
   const offsets = await logOffsets(state);
@@ -168,8 +171,9 @@ async function devDown(deps: Deps, project: Project): Promise<CommandResult> {
   if (!state) {
     return { data: { sandbox: "none running" }, help: ["Run `proofy dev up` to start one"] };
   }
-  await saveLogs(deps.proc, state, outDir(project.paths));
-  await stop(deps.proc, state);
+  const docker = sandboxProc(deps.proc, deps.env);
+  await saveLogs(docker, state, outDir(project.paths));
+  await stop(docker, state);
   await rm(stateFile(project), { force: true });
   return { data: { sandbox: state.project, status: "stopped, data deleted" }, help: ["Run `proofy` to see each flow's state"] };
 }
