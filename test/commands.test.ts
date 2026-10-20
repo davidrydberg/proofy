@@ -137,12 +137,43 @@ describe("commands without Docker", () => {
     const typo = await cli(["approve", "checkout"], dir, noDocker, person("chekout", questions));
     expect(typo.code).toBe(4);
     expect(typo.out).toContain("Not approved: the answer was not checkout");
-    expect(questions[0]).toContain("R1 pass, R2 pass");
     expect(questions[0]).toContain("Type checkout to approve it");
     expect(existsSync(lock)).toBe(false);
 
     expect((await cli(["approve", "checkout"], dir, noDocker, person(" checkout\n"))).code).toBe(0);
     expect((await cli([], dir)).out).toContain("checkout,approved");
+  });
+
+  it("approve shows results, the agent's assumptions, what is not covered and the report before asking", async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, "e2e/specs/checkout.md"),
+      "# Checkout\n\n## Requirements\n\nR1. Order shown.\nR2. Mail sent.\n\n## Assumed\n\nWhat the request did not say.\n\n- The guest pays by bank transfer.\n- Shipping goes to Sweden.\n\n## Not covered\n\n- Card payments.\n",
+    );
+    for (const id of ["20261020-110000", "20261020-110100", "20261020-110200"]) await fakeRun(dir, id, ["pass", "fail"]);
+    const questions: string[] = [];
+    const approved = await cli(["approve", "checkout"], dir, noDocker, person("checkout", questions));
+    expect(approved.code).toBe(0);
+    const [screen = ""] = questions;
+    expect(screen).toContain("Review checkout before you approve it");
+    expect(screen).toContain("\u2713 R1");
+    expect(screen).toContain("\u2717 R2  (fail)");
+    expect(screen).toContain("Assumed by the agent, not said by you:\n  ! The guest pays by bank transfer.\n  ! Shipping goes to Sweden.");
+    expect(screen).not.toContain("What the request did not say");
+    expect(screen).toContain("Not covered:\n  \u2022 Card payments.");
+    expect(screen).toContain("Evidence and screenshots: e2e/out/20261020-110200/report.md");
+    expect(approved.out).toContain("The guest pays by bank transfer.");
+  });
+
+  it("approve says when the agent assumed nothing", async () => {
+    const dir = project();
+    for (const id of ["20261020-110000", "20261020-110100", "20261020-110200"]) await fakeRun(dir, id, ["pass", "pass"]);
+    const questions: string[] = [];
+    const declined = await cli(["approve", "checkout"], dir, noDocker, person("", questions));
+    expect(declined.code).toBe(4);
+    expect(declined.out).toContain("Not approved: checkout stays as it is");
+    expect(questions[0]).toContain("Assumed by the agent: nothing");
+    expect(questions[0]).not.toContain("Not covered");
   });
 
   it("a change to e2e/proofy.json or a compose file makes the flow out of date and says what changed", async () => {
