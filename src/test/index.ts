@@ -1,13 +1,15 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test as base, type Page, type TestInfo } from "@playwright/test";
 import { MAILPIT_API, MOUNT, STANDIN_ADMIN } from "../sandbox/contract.js";
+import { asJson, sameJson } from "./compare.js";
 
 export { expect } from "@playwright/test";
 
 /** One line of e2e/out/<run>/flows/<flow>/claims.jsonl, read by the host to build the report. */
 export type Entry =
-  | { type: "claim"; test: string; spec: string; did: string; expected: string; actual: string; ok: boolean; evidence?: unknown; fakes: string[] }
+  // `compared`: ok left out, so proofy compared expected and actual. Lines without it were decided by the test.
+  | { type: "claim"; test: string; spec: string; did: string; expected: unknown; actual: unknown; ok: boolean; compared?: true; evidence?: unknown; fakes: string[] }
   | { type: "not-covered"; test: string; spec: string; why: string }
   | { type: "shot"; test: string; file: string; label: string };
 
@@ -16,12 +18,17 @@ export interface Claim {
   spec: string;
   /** What the test did to check it. */
   did: string;
-  /** What should be true, in words. */
-  expected: string;
-  /** What was actually found, as read from the app, a fake or Mailpit. */
+  /** What should be true: any JSON value, such as { status: "paid", total: 120 }. With ok, it can be words. */
+  expected: unknown;
+  /** What was actually found, as read from the app, a fake or Mailpit, in the same shape as expected. */
   actual: unknown;
-  /** Whether the requirement held. Decide it from real values, never from text on the screen alone. */
-  ok: boolean;
+  /**
+   * Leave it out: proofy then compares expected and actual as JSON, and the requirement holds only when they are
+   * equal. A pattern check goes into actual as a value, such as { orderNumber: /^\d+$/.test(orderNumber) }. Set ok
+   * only for a check equality cannot express, such as a range or "only these recipients"; the report then marks
+   * the claim as decided by the test. Decide it from real values, never from text on the screen alone.
+   */
+  ok?: boolean;
   /** Raw data behind the claim: a stored record, a request body. Shown in the report. */
   evidence?: unknown;
   /** Fakes this claim's evidence depends on. Hosts read with standin.requests() are added automatically. */
@@ -89,18 +96,22 @@ export const test = base.extend<{ proofy: void }>({
 export function claim(input: Claim): void {
   const state = active("claim");
   const fakes = [...new Set([...(input.fakes ?? []), ...state.fakes])].sort();
+  const expected = asJson(input.expected);
+  const actual = asJson(input.actual);
+  const ok = input.ok ?? sameJson(expected, actual);
   write(state, {
     type: "claim",
     test: state.title,
     spec: input.spec,
     did: input.did,
-    expected: input.expected,
-    actual: typeof input.actual === "string" ? input.actual : JSON.stringify(input.actual),
-    ok: input.ok,
+    expected,
+    actual,
+    ok,
+    ...(input.ok === undefined ? { compared: true as const } : {}),
     ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
     fakes,
   });
-  if (!input.ok) state.failed.push(input.spec);
+  if (!ok) state.failed.push(input.spec);
 }
 
 /** Marks a requirement the sandbox cannot show, with the reason. It appears in the report, never as a pass. */
@@ -128,7 +139,9 @@ export async function exec(name: string, args: string[] = []): Promise<string> {
   active("exec");
   const id = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   mkdirSync(MOUNT.exec, { recursive: true });
-  writeFileSync(join(MOUNT.exec, `${id}.req.json`), JSON.stringify({ name, args }));
+  // Written whole, then renamed: the host polls the folder and must never read half a request.
+  writeFileSync(join(MOUNT.exec, `${id}.req.tmp`), JSON.stringify({ name, args }));
+  renameSync(join(MOUNT.exec, `${id}.req.tmp`), join(MOUNT.exec, `${id}.req.json`));
   const response = join(MOUNT.exec, `${id}.res.json`);
   const deadline = Date.now() + 120_000;
   while (!existsSync(response)) {

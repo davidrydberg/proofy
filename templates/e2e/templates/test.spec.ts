@@ -15,14 +15,20 @@ test("guest checkout", async ({ page }) => {
   await shot("thank-you page");
 
   const orderNumber = (await page.getByTestId("order-number").textContent())?.trim() ?? "";
-  claim({ spec: "R1", did: "placed the order as a guest", expected: "an order number on the thank-you page", actual: orderNumber, ok: /^\d+$/.test(orderNumber) });
+  // proofy compares expected and actual itself, so a pattern check goes into actual as a value.
+  claim({ spec: "R1", did: "placed the order as a guest", expected: { numericOrderNumber: true }, actual: { numericOrderNumber: /^\d+$/.test(orderNumber) }, evidence: { orderNumber } });
 
   // Read the stored order, not the screen: the page can say "thank you" while nothing was saved.
   const order = JSON.parse(await exec("order", [orderNumber])) as { status: string; total: string };
-  claim({ spec: "R2", did: `read order ${orderNumber}`, expected: "processing, 249.00", actual: `${order.status}, ${order.total}`, ok: order.status === "processing" && order.total === "249.00", evidence: order });
+  claim({ spec: "R2", did: `read order ${orderNumber}`, expected: { status: "processing", total: "249.00" }, actual: { status: order.status, total: order.total }, evidence: order });
 
   const messages = await mail.for(guest.email);
-  claim({ spec: "R3", did: `read ${guest.email}'s mail`, expected: "one email with the order number", actual: `${messages.length} emails`, ok: messages.length === 1 && messages[0]!.text.includes(orderNumber) });
+  claim({
+    spec: "R3",
+    did: `read ${guest.email}'s mail`,
+    expected: { emails: 1, withOrderNumber: 1 },
+    actual: { emails: messages.length, withOrderNumber: messages.filter((message) => message.text.includes(orderNumber)).length },
+  });
 
   notCovered("R4", "example only: read the stock count with exec() before and after");
 });

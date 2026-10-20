@@ -8,6 +8,8 @@ const LABEL: Record<RequirementOutcome, string> = {
   "not-checked": "not checked",
 };
 
+const DECIDED = { proofy: "proofy compared", test: "test decided" } as const;
+
 export type Verdict = "pass" | "fail" | "untrusted" | "environment";
 
 /** The run's one-word result, matching the exit code: environment 3, a failed approved flow 1, untrusted 4, pass 0. */
@@ -59,6 +61,7 @@ export function renderMarkdown(report: RunReport, image: (path: string) => strin
     lines.push(...flowSection(flow, image, options.maxShots));
   }
   lines.push(...outsideSection(report));
+  lines.push(...imagesSection(report));
   if (report.notes.length > 0) {
     lines.push("### Notes", "", ...report.notes.map((note) => `- ${note}`), "");
   }
@@ -70,11 +73,15 @@ function flowSection(flow: FlowResult, image: (path: string) => string, maxShots
   lines.push("| Req | Result | Requirement | What the test did | Expected | Actual | Relied on fakes |", "|---|---|---|---|---|---|---|");
   for (const requirement of flow.requirements) {
     const did = requirement.result === "not-covered" ? `not covered: ${requirement.why ?? ""}` : (requirement.did ?? "");
+    const result = `${LABEL[requirement.result]}${requirement.decidedBy ? `, ${DECIDED[requirement.decidedBy]}` : ""}`;
     lines.push(
-      `| ${requirement.id} | ${LABEL[requirement.result]} | ${cell(requirement.text)} | ${cell(did)} | ${cell(requirement.expected ?? "")} | ${cell(requirement.actual ?? "")} | ${cell(requirement.fakes.join(", ") || "none")} |`,
+      `| ${requirement.id} | ${result} | ${cell(requirement.text)} | ${cell(did)} | ${cell(requirement.expected ?? "")} | ${cell(requirement.actual ?? "")} | ${cell(requirement.fakes.join(", ") || "none")} |`,
     );
   }
   lines.push("");
+  if (flow.requirements.some((requirement) => requirement.decidedBy === "test")) {
+    lines.push(`${DECIDED.proofy}: proofy checked that actual equals expected. ${DECIDED.test}: the test passed its own result, so check that expected and actual support it.`, "");
+  }
   const evidence = flow.requirements.filter((requirement) => requirement.evidence !== undefined);
   if (evidence.length > 0) {
     lines.push("<details><summary>Evidence</summary>", "");
@@ -117,6 +124,22 @@ function outsideSection(report: RunReport): string[] {
     lines.push(`Looked up but never called over HTTP (another protocol, or the call gave up): ${report.lookedUpOnly.join(", ")}.`, "");
   }
   return lines;
+}
+
+function imagesSection(report: RunReport): string[] {
+  if (!report.images || report.images.length === 0) return [];
+  return [
+    "<details><summary>Images</summary>",
+    "",
+    "The image each service ran. When results change between runs, compare these with the other run's report.",
+    "",
+    "| Service | Image | Image ID | Registry digest |",
+    "|---|---|---|---|",
+    ...report.images.map((image) => `| ${image.service} | ${cell(image.image)} | ${image.id ?? "not found"} | ${image.digest ? cell(image.digest) : "none"} |`),
+    "",
+    "</details>",
+    "",
+  ];
 }
 
 export function countResults(flow: FlowResult): string {

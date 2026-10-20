@@ -43,25 +43,26 @@ test("guest checkout with cash on delivery", async ({ page }) => {
   const number = order.number;
   const pageText = await page.locator("main").innerText();
   const onPage = new RegExp(`Order\\s*(#|number)?:?\\s*${number}\\b`, "i").test(pageText);
-  claim({ spec: "R1", did: "placed the order and read the stored order", expected: `confirmation page showing order ${number}`, actual: onPage ? `shows order ${number}` : `page does not show ${number}`, ok: onPage && /received/i.test(pageText) });
+  claim({
+    spec: "R1",
+    did: `placed the order and looked for order ${number} on the confirmation page`,
+    expected: { orderShown: true, saysReceived: true },
+    actual: { orderShown: onPage, saysReceived: /received/i.test(pageText) },
+  });
 
-  const line = order.line_items[0];
   claim({
     spec: "R2",
     did: `read order ${number} with wp-cli`,
-    expected: `processing, cod, 1 x COFFEE, 120.00 SEK, billed to ${guest.email}, no account`,
-    actual: `${order.status}, ${order.payment_method}, ${order.line_items.map((item) => `${item.quantity} x ${item.sku}`).join(" + ")}, ${order.total} ${order.currency}, billed to ${order.billing.email}, customer ${order.customer_id}`,
-    ok:
-      order.status === "processing" &&
-      order.payment_method === "cod" &&
-      order.line_items.length === 1 &&
-      line?.sku === "COFFEE" &&
-      line.quantity === 1 &&
-      Number(order.total) === 120 &&
-      order.currency === "SEK" &&
-      order.billing.email === guest.email &&
-      order.customer_id === 0,
-    evidence: { status: order.status, payment_method: order.payment_method, line_items: order.line_items, total: order.total, currency: order.currency, billing_email: order.billing.email, customer_id: order.customer_id },
+    expected: { status: "processing", payment_method: "cod", items: [{ sku: "COFFEE", quantity: 1 }], total: 120, currency: "SEK", billing_email: guest.email, customer_id: 0 },
+    actual: {
+      status: order.status,
+      payment_method: order.payment_method,
+      items: order.line_items.map(({ sku, quantity }) => ({ sku, quantity })),
+      total: Number(order.total),
+      currency: order.currency,
+      billing_email: order.billing.email,
+      customer_id: order.customer_id,
+    },
   });
 
   // Wait 30 seconds at most, then 5 more seconds of quiet, so a late second email is counted.
@@ -70,17 +71,18 @@ test("guest checkout with cash on delivery", async ({ page }) => {
   claim({
     spec: "R3",
     did: `read ${guest.email}'s mail`,
-    expected: `exactly one email showing order ${number}`,
-    actual: `${mine.length} email(s): ${mine.map((m) => m.subject).join(" | ")}`,
-    ok: mine.length === 1 && hasNumber.test(`${mine[0]!.subject}\n${mine[0]!.text}`),
+    expected: { emails: 1, showingOrder: 1 },
+    actual: { emails: mine.length, showingOrder: mine.filter((m) => hasNumber.test(`${m.subject}\n${m.text}`)).length },
+    evidence: mine.map((m) => m.subject),
   });
 
   const { stock_quantity: stockAfter } = await wc<{ stock_quantity: number }>("product", "get", String(coffee!.id), "--fields=stock_quantity");
-  claim({ spec: "R4", did: "read the coffee's stock before and after", expected: `${stockBefore - 1}`, actual: `${stockAfter}`, ok: stockAfter === stockBefore - 1 });
+  claim({ spec: "R4", did: "read the coffee's stock before and after", expected: stockBefore - 1, actual: stockAfter });
 
   // The guest's last name is this test's tag(), so these searches only find this order's emails.
   const about = [...(await mail.search(guest.last, { atLeast: 2, settleMs: 3_000 })), ...(await mail.search(`"${number}"`, { atLeast: 0 }))];
   const recipients = [...new Set(about.flatMap((m) => [...m.to, ...m.cc, ...m.bcc]))].sort();
+  // "Only these recipients" allows either one alone, which equality cannot express, so the test passes ok itself.
   claim({
     spec: "R5",
     did: "found every email naming the guest or the order, with cc and bcc",

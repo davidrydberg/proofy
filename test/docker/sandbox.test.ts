@@ -33,11 +33,20 @@ describe("sealed sandbox on Docker", () => {
   it("runs, proves, approves and checks flows end to end", async () => {
     const dir = shop();
     const first = await cli(["run", "buy-coffee", "sealed", "--json"], dir);
-    const report = JSON.parse(first.out) as { verdict: string; flows: Array<{ name: string; status: string; requirements: Array<{ id: string; result: string }> }>; outside: Array<{ host: string; handledAs: string }>; id: string };
+    const report = JSON.parse(first.out) as {
+      verdict: string;
+      flows: Array<{ name: string; status: string; requirements: Array<{ id: string; result: string; decidedBy?: string }> }>;
+      outside: Array<{ host: string; handledAs: string }>;
+      images: Array<{ service: string; image: string; id?: string }>;
+      id: string;
+    };
     expect(first.code).toBe(4);
     expect(report.verdict).toBe("untrusted");
     expect(report.flows.map((flow) => `${flow.name}:${flow.status}`)).toEqual(["buy-coffee:passed", "sealed:passed"]);
     expect(report.flows[0]!.requirements.map((r) => r.result)).toEqual(["pass", "pass", "pass", "pass", "not-covered"]);
+    expect(report.flows[0]!.requirements.map((r) => r.decidedBy)).toEqual(["test", "proofy", "test", "proofy", undefined]);
+    expect(report.images.map((image) => image.service)).toEqual(["shop", "proofy-standin", "mailpit", "proofy-runner"]);
+    expect(report.images.every((image) => image.id?.startsWith("sha256:"))).toBe(true);
     expect(report.outside).toContainEqual({ host: "cdn.unlisted.example.org", handledAs: "refused", count: 1 });
     expect(report.outside).toContainEqual({ host: "api.payments.test", handledAs: "fake", count: 1 });
     const requests = readFileSync(join(dir, "e2e/out", report.id, "requests.jsonl"), "utf8");
