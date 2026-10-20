@@ -91,12 +91,22 @@ describe("sandbox compose", () => {
       [{ volumes: [{ type: "bind", source: "/Users/me/.docker/run/docker.sock", target: "/d.sock" }] }, /bind mount of/],
       [{ volumes: [{ type: "bind", source: "/var/run", target: "/host-run" }] }, /bind mount of \/var\/run/],
       [{ volumes: [{ type: "bind", source: "/", target: "/host" }] }, /bind mount of \//],
+      [{ volumes: [{ type: "bind", source: "/run/user/1000", target: "/xdg" }] }, /bind mount of \/run\/user\/1000/],
+      [{ volumes: [{ type: "bind", source: "/run/user/", target: "/xdg" }] }, /bind mount of \/run\/user/],
+      [{ volumes: [{ type: "volume", source: "hostrun", target: "/host-run" }] }, /volume hostrun, a bind mount of \/var\/run/],
+      [{ volumes: [{ type: "volume", source: "rootless", target: "/xdg" }] }, /volume rootless, a bind mount of \/run\/user\/1000/],
     ];
+    const volumes = {
+      hostrun: { name: "shop_hostrun", driver_opts: { type: "none", o: "bind", device: "/var/run" } },
+      rootless: { name: "shop_rootless", driver_opts: { type: "none", o: "ro, rbind", device: "/run/user/1000" } },
+      code: { name: "shop_code", driver_opts: { type: "none", o: "bind", device: "/repo/src" } },
+      tmp: { name: "shop_tmp", driver_opts: { type: "tmpfs", o: "size=100m", device: "/var/run" } },
+    };
     for (const [settings, message] of refused) {
-      expect(() => generate({ services: { web: { image: "x", ...settings } } }, { compose: ["c.yml"] }), JSON.stringify(settings)).toThrow(message);
+      expect(() => generate({ services: { web: { image: "x", ...settings } }, volumes }, { compose: ["c.yml"] }), JSON.stringify(settings)).toThrow(message);
     }
-    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "volume", source: "data", target: "/data" }] };
-    expect(() => generate({ services: { web: allowed, db: { image: "y" } } }, { compose: ["c.yml"] })).not.toThrow();
+    const allowed = { image: "x", privileged: false, cap_add: [], devices: [], pid: "service:db", ipc: "shareable", volumes: [{ type: "bind", source: "/repo/var/run", target: "/run" }, { type: "volume", source: "data", target: "/data" }, { type: "volume", source: "code", target: "/code" }, { type: "volume", source: "tmp", target: "/tmp" }, { type: "bind", source: "/run/user/1000/app", target: "/app" }] };
+    expect(() => generate({ services: { web: allowed, db: { image: "y" } }, volumes }, { compose: ["c.yml"] })).not.toThrow();
   });
 
   it("picks a stable subnet per project and a different one per attempt", () => {
