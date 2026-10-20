@@ -24,7 +24,8 @@ export interface Claim {
   actual: unknown;
   /**
    * Leave it out: proofy then compares expected and actual as JSON, and the requirement holds only when they are
-   * equal. Set it only for a check equality cannot express, such as a pattern or a range; the report then marks
+   * equal. A pattern check goes into actual as a value, such as { orderNumber: /^\d+$/.test(orderNumber) }. Set ok
+   * only for a check equality cannot express, such as a range or "only these recipients"; the report then marks
    * the claim as decided by the test. Decide it from real values, never from text on the screen alone.
    */
   ok?: boolean;
