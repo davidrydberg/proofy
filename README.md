@@ -29,10 +29,11 @@ proofy init     # adds e2e/ with agent instructions, templates and a config fill
 
 Then tell your agent what to test, in one sentence: "add a proofy test: a guest can buy a product and gets a confirmation email".
 It finishes setup if needed, writes `e2e/specs/<flow>.md` and the test, and runs it until three runs agree, without stopping to ask.
-Whatever you did not say, it picks and lists under `## Assumed` in the spec, so you review everything once, when you approve.
+Whatever you did not say, it picks and lists under `## Assumed` in the spec, so you review everything once: read the report, then approve.
 
 ```sh
 proofy                            # setup, every flow's state and the next step; safe for a session-start hook
+proofy report                     # you: the latest run, each requirement with what happened; screenshots in report.md
 proofy approve guest-checkout     # you: shows results, the agent's assumptions and gaps, then asks you to type the name
 proofy run --all                  # every approved flow in a fresh sealed sandbox
 proofy run --all --pr 42 --post   # a pull request's code, report posted on the PR
@@ -56,7 +57,7 @@ See [`examples/woocommerce`](examples/woocommerce) for a complete shop with two 
 
 ## How it works
 
-![The proofy flow: you describe it, your coding agent writes the tests, you approve, proofy runs them with Playwright in sealed Docker, and the result lands on your PR](docs/flow.png)
+![The proofy flow: you describe it, your coding agent writes the tests, you read the report and approve, proofy runs them with Playwright in sealed Docker, and the result lands on your PR](docs/flow.png)
 
 ## Trust model
 

@@ -58,14 +58,15 @@
 </div>
 
 <script>
-const DURATION = 30;
+const DURATION = 33;
 const OK = "✓", BULLET = "●", ELBOW = "⎿";
 
 // What the person types into the prompt box; it lands in the history at `send`.
 const TYPING = [
   { from: 0.8, to: 3.6, send: 4.2, mode: "prompt", text: "add a proofy test: a guest can buy a product and gets an email" },
-  { from: 15.0, to: 16.2, send: 16.6, mode: "bash", text: "proofy approve guest-checkout" },
-  { from: 20.0, to: 21.4, send: 21.8, mode: "prompt", text: "check every approved flow on PR 42" },
+  { from: 13.4, to: 14.2, send: 14.6, mode: "bash", text: "proofy report" },
+  { from: 19.4, to: 20.6, send: 21.0, mode: "bash", text: "proofy approve guest-checkout" },
+  { from: 23.4, to: 24.8, send: 25.2, mode: "prompt", text: "check every approved flow on PR 42" },
 ];
 
 const tool = (name, arg) => `<span class="g">${BULLET}</span> <span class="bold">${name}</span>(${arg})`;
@@ -85,14 +86,20 @@ const HISTORY = [
   { at: 8.0, until: 10.4, html: out(`<span class="dim">Running in a sealed sandbox...</span>`) },
   { at: 10.4, html: out(`<span class="g">${OK}</span> 3 of 3 runs identical`) },
   { at: 11.4, cls: "gap", html: say(`Done. I assumed the guest pays by card.`) },
-  { at: 12.0, html: `  Check that, then approve it yourself.` },
-  { at: 16.6, cls: "bang", html: `! ${TYPING[1].text}` },
-  { at: 17.2, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
-  { at: 21.8, cls: "user", html: TYPING[2].text },
-  { at: 22.0, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
-  { at: 22.1, until: 24.4, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
-  { at: 24.4, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
-  { at: 25.2, cls: "gap", html: say(`All requirements held. Evidence is posted on PR 42.`) },
+  { at: 12.0, html: `  Read the report, then approve it yourself.` },
+  { at: 14.6, cls: "bang", html: `! ${TYPING[1].text}` },
+  { at: 15.0, html: out(`guest-checkout  <span class="g">passed</span>  3 of 3 runs identical`) },
+  { at: 15.5, html: more(`<span class="g">${OK}</span> R1  stored as "processing"`) },
+  { at: 16.0, html: more(`<span class="g">${OK}</span> R2  1 email to guest@example.com`) },
+  { at: 16.5, html: more(`<span class="g">${OK}</span> R3  no other mail`) },
+  { at: 17.0, html: more(`<span class="dim">Screenshots: e2e/out/20261020-091200/report.md</span>`) },
+  { at: 21.0, cls: "bang", html: `! ${TYPING[2].text}` },
+  { at: 21.6, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
+  { at: 25.2, cls: "user", html: TYPING[3].text },
+  { at: 25.4, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
+  { at: 25.5, until: 27.8, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
+  { at: 27.8, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
+  { at: 28.6, cls: "gap", html: say(`All requirements held. The report is posted on PR 42.`) },
 ];
 
 const SPINNER = ["·", "✢", "✳", "✶", "✻", "✽"];
