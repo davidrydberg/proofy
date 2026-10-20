@@ -56,7 +56,7 @@ See [`examples/woocommerce`](examples/woocommerce) for a complete shop with two 
 
 ## How it works
 
-![The proofy flow: you describe it, AI writes the tests, you approve, proofy runs them with Playwright in sealed Docker, and the result lands on your PR](docs/flow.png)
+![The proofy flow: you describe it, your coding agent writes the tests, you approve, proofy runs them with Playwright in sealed Docker, and the result lands on your PR](docs/flow.png)
 
 ## Trust model
 

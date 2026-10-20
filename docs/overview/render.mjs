@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
-const FPS = 15;
+const FPS = 10;
 const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const docs = join(here, "..");
@@ -15,7 +15,7 @@ const docs = join(here, "..");
 async function renderGif(browser) {
   const frames = mkdtempSync(join(tmpdir(), "proofy-overview-"));
   try {
-    const page = await browser.newPage({ viewport: { width: 960, height: 540 }, deviceScaleFactor: 2 });
+    const page = await browser.newPage({ viewport: { width: 1100, height: 650 }, deviceScaleFactor: 2 });
     await page.goto(pathToFileURL(join(here, "overview.html")).href);
     const duration = await page.evaluate(() => globalThis.DURATION);
     const count = Math.round(duration * FPS);
@@ -25,7 +25,7 @@ async function renderGif(browser) {
     }
     execFileSync("ffmpeg", [
       "-y", "-loglevel", "error", "-framerate", String(FPS), "-i", join(frames, "%04d.png"),
-      "-vf", "scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle",
+      "-vf", "scale=1100:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle",
       "-loop", "0", join(docs, "overview.gif"),
     ]);
   } finally {
@@ -35,7 +35,7 @@ async function renderGif(browser) {
 
 async function renderFlow(browser) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 2 });
-  await page.setContent(`<body style="margin:0;background:#181818"><pre class="mermaid" id="flow" style="display:inline-block;margin:0;padding:24px"></pre></body>`);
+  await page.setContent(`<body style="margin:0;background:#1e1e2e"><pre class="mermaid" id="flow" style="display:inline-block;margin:0;padding:24px"></pre></body>`);
   await page.addScriptTag({ url: MERMAID });
   await page.evaluate(async (source) => {
     globalThis.document.getElementById("flow").textContent = source;
@@ -48,15 +48,15 @@ async function renderFlow(browser) {
       themeVariables: {
         fontFamily: "-apple-system, Segoe UI, Helvetica, Arial, sans-serif",
         fontSize: "15px",
-        background: "#181818",
-        primaryColor: "#232323",
-        primaryTextColor: "#e8e8e8",
-        primaryBorderColor: "#d77757",
-        lineColor: "#8a8a8a",
-        clusterBkg: "#1e1e1e",
-        clusterBorder: "#3a3a3a",
-        titleColor: "#e8e8e8",
-        edgeLabelBackground: "#181818",
+        background: "#1e1e2e",
+        primaryColor: "#313244",
+        primaryTextColor: "#cdd6f4",
+        primaryBorderColor: "#cba6f7",
+        lineColor: "#7f849c",
+        clusterBkg: "#181825",
+        clusterBorder: "#45475a",
+        titleColor: "#cdd6f4",
+        edgeLabelBackground: "#1e1e2e",
       },
     });
     await globalThis.mermaid.run({ nodes: [globalThis.document.getElementById("flow")] });
