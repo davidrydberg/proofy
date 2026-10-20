@@ -8,4 +8,6 @@ export interface Deps {
   now: () => Date;
   /** Progress lines for long commands. Goes to stderr, so stdout stays one clean result. */
   log: (line: string) => void;
+  /** Asks the person at the terminal and returns their answer. Absent when stdin or stdout is not a terminal, so only a person can approve. */
+  ask?: (question: string) => Promise<string>;
 }

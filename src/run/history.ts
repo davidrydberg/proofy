@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Config } from "../config.js";
 import { exists, type Paths } from "../project.js";
 import type { Approvals } from "./approvals.js";
-import { fingerprint, sameFingerprint, type Fingerprint } from "./fingerprint.js";
+import { changedParts, fingerprint, sameFingerprint, type Fingerprint } from "./fingerprint.js";
 import { outcome, type FlowResult, type RunReport } from "./results.js";
 
 export const KEEP_RUNS = 20;
@@ -18,6 +18,8 @@ export interface FlowStatus {
   runs: string[];
   /** Why a flow with three runs is still not ready, such as a requirement no test checks. */
   reason?: string;
+  /** What changed since an out-of-date flow was approved, such as "test" or "e2e/proofy.json". */
+  changed?: string[];
   fingerprint: Fingerprint;
 }
 
@@ -78,7 +80,7 @@ export async function flowStatuses(paths: Paths, config: Config, names: string[]
     }
     const proof = proven(matching.map((match) => match.flow));
     const state: FlowState = approval ? "out-of-date" : proof.ok ? "ready" : proof.unstable ? "unstable" : "unproven";
-    out.push({ name, state, runs, fingerprint: current, ...(proof.reason ? { reason: proof.reason } : {}) });
+    out.push({ name, state, runs, fingerprint: current, ...(proof.reason ? { reason: proof.reason } : {}), ...(approval ? { changed: changedParts(approval, current) } : {}) });
   }
   return out;
 }

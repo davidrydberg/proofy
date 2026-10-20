@@ -29,6 +29,8 @@ export interface TestResult {
 export interface FlowResult {
   name: string;
   approved: boolean;
+  /** What changed since the flow was approved, when it was approved before. */
+  changed?: string[];
   fingerprint: Fingerprint;
   status: "passed" | "failed";
   requirements: RequirementResult[];
@@ -49,7 +51,8 @@ export interface RunReport {
   kind: "run" | "dev";
   startedAt: string;
   finishedAt: string;
-  source: { commit?: string; dirty?: boolean; pr?: number };
+  /** `approvalsChanged`: flows whose entry in e2e/proofy.lock.json the pull request adds, changes or removes. */
+  source: { commit?: string; dirty?: boolean; pr?: number; approvalsChanged?: string[] };
   flows: FlowResult[];
   outside: OutsideCall[];
   /** Names the app looked up but never sent an HTTP request to, such as an SMTP host. */
@@ -61,6 +64,8 @@ export interface RunReport {
 export interface PlannedFlow {
   name: string;
   approved: boolean;
+  /** What changed since the flow was approved, when it was approved before. */
+  changed?: string[];
   fingerprint: Fingerprint;
   requirements: Requirement[];
 }
@@ -164,6 +169,7 @@ export function flowResult(plan: PlannedFlow, entries: Entry[], tests: TestResul
   return {
     name: plan.name,
     approved: plan.approved,
+    ...(plan.changed ? { changed: plan.changed } : {}),
     fingerprint: plan.fingerprint,
     status: requirements.some((requirement) => requirement.result === "fail" || requirement.result === "not-reached") ? "failed" : "passed",
     requirements,

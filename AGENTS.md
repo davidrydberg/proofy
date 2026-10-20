@@ -33,7 +33,7 @@ Read it before changing behaviour, and change it in the same commit when a decis
 - proofy never calls an AI model. AI work happens in the user's agent, guided by `templates/e2e/AGENTS.md`.
 - `templates/e2e/AGENTS.md` is the product as much as the code. Changes to the flow, states, helpers or rules go there and in `prd.md` together, and are copied to `examples/woocommerce/e2e/`.
 - The seal is the product's promise: every service on one internal network, every lookup answered by the fake-service container, no published ports except through the dev forwarder. Change `src/sandbox/compose.ts` only with its tests and the Docker test.
-- Never prompt. Every input is an argument, a flag or the config.
+- Never prompt, except `proofy approve`: it works only in an interactive terminal and asks the person to type the flow name. Every other input is an argument, a flag or the config.
 - `init` never overwrites a user's file.
 - The bare command runs from session-start hooks: files only, no Docker, under a second, always exit 0.
 - Exit codes are a contract: 0 pass, 1 a requirement failed, 2 usage or config, 3 environment, 4 not approved. An unexpected crash is 3, never 1.
