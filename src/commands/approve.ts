@@ -28,7 +28,7 @@ export async function approveCommand(args: string[], deps: Deps): Promise<Comman
   if (status.state === "approved") {
     return { data: { flow: name, state: "already approved" }, help: [`Run \`proofy run ${name}\` to check it`] };
   }
-  if (status.state !== "ready" && !(status.state === "out-of-date" && status.runs.length === 3 && !status.reason)) {
+  if (!status.approvable) {
     throw new CliError(`${name} cannot be approved yet: ${status.reason ?? status.state}`, "NOT_APPROVED", [
       "Approval needs 3 runs with the current files and identical results per requirement",
       `Run \`proofy run ${name}\` or \`proofy dev test ${name}\` until then`,

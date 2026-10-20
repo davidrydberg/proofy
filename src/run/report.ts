@@ -1,3 +1,4 @@
+import { EXIT } from "../errors.js";
 import type { FlowResult, RequirementOutcome, RunReport } from "./results.js";
 
 const LABEL: Record<RequirementOutcome, string> = {
@@ -20,7 +21,7 @@ export function verdict(report: RunReport): Verdict {
   return "pass";
 }
 
-export const EXIT_FOR: Record<Verdict, number> = { pass: 0, fail: 1, environment: 3, untrusted: 4 };
+export const EXIT_FOR: Record<Verdict, number> = { pass: EXIT.pass, fail: EXIT.failed, environment: EXIT.environment, untrusted: EXIT.notApproved };
 
 const HEADLINE: Record<Verdict, string> = {
   pass: "PASS: every requirement of every approved flow held",
@@ -153,7 +154,7 @@ function imagesSection(report: RunReport): string[] {
   ];
 }
 
-export function countResults(flow: FlowResult): string {
+function countResults(flow: FlowResult): string {
   const counts = new Map<string, number>();
   for (const requirement of flow.requirements) counts.set(requirement.result, (counts.get(requirement.result) ?? 0) + 1);
   return [...counts].map(([result, count]) => `${count} ${result}`).join(", ") || "no requirements";

@@ -140,7 +140,7 @@ describe("sandbox", () => {
     await expect(prepare(broken, options(dir, {}))).rejects.toMatchObject({ suggestions: [expect.any(String), expect.stringMatching(/^NAME has no value: proofy never reads/)] });
   });
 
-  it("refuses a variable docker needs where it reaches the app, even with a default, and leaves a warning worded otherwise blank", async () => {
+  it("refuses docker's own variables in the app, even with a default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "proofy-machine-"));
     const model = { services: { web: { image: "shop", environment: { DATA: "/home/me/data", KEY: "" } } } };
     const raw = { services: { web: { image: "shop", environment: { DATA: "${HOME:-/root}/data", KEY: "${STRIPE_KEY}" } } } };
@@ -167,7 +167,7 @@ describe("sandbox", () => {
     await expect(prepare(proxied, options(dir, {}))).resolves.toMatchObject({ project: "proofy-shop-run-1" });
   });
 
-  it("refuses a bind mount, secret or config that is or will be created through a symlink pointing outside the repository", async () => {
+  it("refuses mounts that symlink outside the repo", async () => {
     const dir = mkdtempSync(join(tmpdir(), "proofy-binds-"));
     const outside = mkdtempSync(join(tmpdir(), "proofy-outside-"));
     writeFileSync(join(outside, "id_ed25519"), "key");

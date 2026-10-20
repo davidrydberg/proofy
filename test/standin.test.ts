@@ -86,7 +86,7 @@ describe("fake-service container", () => {
     expect(adminResponse(admin(true), "GET", "/other", bearer).status).toBe(404);
   });
 
-  it("after a reset runs the fakes as they are now, with every file they import, empty state and no earlier requests", () => {
+  it("reset reloads fakes and their imports and clears state", () => {
     // In a Node process of its own, as in the container: module hooks and Node's module cache are process-wide.
     const fakes = mkdtempSync(join(tmpdir(), "proofy-reset-"));
     mkdirSync(join(fakes, "lib"));

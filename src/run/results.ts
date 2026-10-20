@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { stripAnsi } from "../style.js";
 import { sameJson, showValue } from "../test/compare.js";
-import type { Entry } from "../test/index.js";
+import { REQUIREMENTS_NOT_MET, type Entry } from "../sandbox/contract.js";
 import type { ServiceImage } from "../sandbox/sandbox.js";
 import type { Fingerprint } from "./fingerprint.js";
 import type { Requirement } from "./spec.js";
@@ -149,7 +150,7 @@ export async function collectResults(outDir: string, planned: PlannedFlow[]): Pr
 
 export function flowResult(plan: PlannedFlow, entries: Entry[], tests: TestResult[]): FlowResult {
   const known = new Set(plan.requirements.map((requirement) => requirement.id));
-  const anyTestBroke = tests.length === 0 || tests.some((test) => test.status !== "passed" && !/Requirements not met/.test(test.error ?? ""));
+  const anyTestBroke = tests.length === 0 || tests.some((test) => test.status !== "passed" && !(test.error ?? "").includes(REQUIREMENTS_NOT_MET));
   const requirements = plan.requirements.map((requirement): RequirementResult => {
     const claims = entries.filter((entry): entry is Extract<Entry, { type: "claim" }> => entry.type === "claim" && entry.spec === requirement.id);
     // A compared claim is compared again here from its recorded values, never taken from its ok.
@@ -188,7 +189,7 @@ export function flowResult(plan: PlannedFlow, entries: Entry[], tests: TestResul
   };
 }
 
-/** A requirement that did not hold, or that no claim checked in this run: only not-covered is excused, by the test's own reason. */
+/** Failed, or never claimed. Only not-covered (with a reason) is excused. */
 export function failing(result: RequirementOutcome): boolean {
   return result === "fail" || result === "not-reached" || result === "not-checked";
 }
@@ -230,10 +231,4 @@ async function readLines<T>(file: string): Promise<T[]> {
         return [];
       }
     });
-}
-
-const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
-
-function stripAnsi(text: string): string {
-  return text.replace(ANSI, "");
 }

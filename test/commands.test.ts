@@ -170,7 +170,7 @@ describe("commands without Docker", () => {
     expect((await cli(["run", "--all"], dir)).code).toBe(4);
   });
 
-  it("an approval covers what the named files depend on: test helpers, every file of the fakes, and included or extended compose files", async () => {
+  it("approval covers test helpers, all fakes, and included compose files", async () => {
     const dir = project();
     writeFileSync(join(dir, "compose.yml"), "include:\n  - db/compose.yml\nservices:\n  web:\n    image: shop\n    extends:\n      file: base.yml\n      service: base\n");
     mkdirSync(join(dir, "db"));
@@ -283,7 +283,7 @@ describe("commands without Docker", () => {
 });
 
 describe("dev test", () => {
-  it("resets the fake-service container before each test, and runs docker without the shell's variables", async () => {
+  it("dev test resets fakes first and runs docker with a clean env", async () => {
     const dir = project();
     const work = join(dir, ".cache", "sandbox");
     mkdirSync(join(work, "runner"), { recursive: true });

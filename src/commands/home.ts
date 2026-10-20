@@ -120,7 +120,7 @@ function nextSteps(checks: Check[], flows: FlowStatus[], orphans: string[]): Hin
       steps.push([`${what} ${list.map((flow) => `${flow.name} (${flow.reason ?? state})`).join(", ")}: \`proofy dev test <flow>\` until 3 runs match (step 5 in e2e/AGENTS.md)`, ""]);
     }
   }
-  const ready = [...named("ready"), ...flows.filter((flow) => flow.state === "out-of-date" && flow.runs.length === 3 && !flow.reason).map((flow) => flow.name)];
+  const ready = flows.filter((flow) => flow.approvable).map((flow) => flow.name);
   if (ready.length > 0) {
     steps.push([`Ready for the human to approve: ${ready.map((name) => `\`proofy approve ${name}\``).join(", ")}. Agents never approve`, ""]);
   }

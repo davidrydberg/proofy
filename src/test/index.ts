@@ -1,17 +1,12 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test as base, type Page, type TestInfo } from "@playwright/test";
-import { MAIL_USER, MAILPIT_API, MOUNT, STANDIN_ADMIN } from "../sandbox/contract.js";
+import { MAIL_USER, MAILPIT_API, MOUNT, REQUIREMENTS_NOT_MET, STANDIN_ADMIN, type Entry } from "../sandbox/contract.js";
 import { asJson, sameJson } from "./compare.js";
 
 export { expect } from "@playwright/test";
+export type { Entry } from "../sandbox/contract.js";
 
-/** One line of e2e/out/<run>/flows/<flow>/claims.jsonl, read by the host to build the report. */
-export type Entry =
-  // `compared`: ok left out, so proofy compared expected and actual. Lines without it were decided by the test.
-  | { type: "claim"; test: string; spec: string; did: string; expected: unknown; actual: unknown; ok: boolean; compared?: true; evidence?: unknown; fakes: string[] }
-  | { type: "not-covered"; test: string; spec: string; why: string }
-  | { type: "shot"; test: string; file: string; label: string };
 
 export interface Claim {
   /** The requirement number from the spec, such as "R2". */
@@ -91,7 +86,7 @@ export const test = base.extend<{ proofy: void }>({
       await use();
       current = undefined;
       if (mine.failed.length > 0) {
-        throw new Error(`Requirements not met: ${mine.failed.join(", ")}. See the report for expected and actual values`);
+        throw new Error(`${REQUIREMENTS_NOT_MET}: ${mine.failed.join(", ")}. See the report for expected and actual values`);
       }
     },
     { auto: true },

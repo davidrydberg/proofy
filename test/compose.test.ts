@@ -40,7 +40,7 @@ const MODEL = {
 };
 
 describe("sandbox compose", () => {
-  it("seals every app service: one internal network, catch-all DNS, no ports, settings from the config only", () => {
+  it("seals every app service", () => {
     const { compose, notes } = generate(MODEL, { compose: ["compose.yml"], app: { service: "web", port: 80 }, env: { web: { APP_ENV: "sandbox" } } });
     const services = compose.services as Record<string, Record<string, unknown>>;
     const web = services.web!;
@@ -137,7 +137,7 @@ describe("sandbox compose", () => {
     }
   });
 
-  it("refuses a volume with driver options, a driver other than local or external, which could mount host data, and drops its fixed name", () => {
+  it("refuses host-backed or external volumes and drops fixed names", () => {
     const web = { image: "x", volumes: [{ type: "volume", source: "share", target: "/share" }] };
     for (const share of [{ driver_opts: { type: "nfs", o: "addr=10.0.0.1,rw", device: ":/export" } }, { driver: "local", driver_opts: { type: "none", o: "bind", device: "/var/run" } }, { driver: "rclone" }]) {
       expect(() => generate({ services: { web }, volumes: { share: { name: "shop_share", ...share } } }, { compose: ["c.yml"] }), JSON.stringify(share)).toThrow(/Volume share sets driver/);
@@ -146,7 +146,7 @@ describe("sandbox compose", () => {
     expect(() => generate({ services: { web }, volumes: { share: { name: "other_db", external: true } } }, { compose: ["c.yml"] })).toThrow(/Volume share is external/);
   });
 
-  it("carries secrets and configs into the sandbox, refusing a socket, a file outside the repository and the environment proofy runs in", () => {
+  it("keeps secrets and configs, refuses sockets, outside files and env sources", () => {
     const web = { image: "x", secrets: [{ source: "key", target: "/run/secrets/key" }], configs: [{ source: "site" }] };
     const files = { secrets: { key: { name: "shop_key", file: "/repo/key.txt" } }, configs: { site: { name: "shop_site", content: "a$$b" } } };
     const { compose } = generate({ services: { web }, ...files }, { compose: ["c.yml"] });
@@ -172,7 +172,7 @@ describe("sandbox compose", () => {
     expect((services["proofy-runner"]!.environment as Record<string, string>).PROOFY_BASE_URL).toBe("http://web:80/$$shop");
   });
 
-  it("finds where a variable without a value reaches the app, leaving out settings proofy drops or replaces", () => {
+  it("finds unset variables that reach the app", () => {
     const raw = {
       name: "${PROJECT}",
       services: {
@@ -198,7 +198,7 @@ describe("sandbox compose", () => {
     ]);
   });
 
-  it("finds every use of a variable docker needs where it reaches the app, also with a default, since its value comes from the machine, but a proxy in build args", () => {
+  it("flags docker's own variables even with a default, except proxies in build args", () => {
     const raw = {
       services: {
         web: {
