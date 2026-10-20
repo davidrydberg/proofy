@@ -5,72 +5,61 @@
 <title>proofy overview</title>
 <style>
   :root {
-    --bg: #0b0b0c; --term: #181818; --bar: #252526; --text: #e8e8e8; --dim: #8a8a8a;
-    --claude: #d77757; --green: #4eba65; --red: #ff6b80; --yellow: #e5c07b; --blue: #7aa7f7; --bash: #fd5db1;
-    --mono: "SF Mono", Menlo, Consolas, monospace;
+    --bg: #232537; --text: #cdd2e6; --dim: #8b90a7; --rule: #6c7086; --user: #2d3046;
+    --claude: #d97757; --green: #4eba65; --red: #ff6b80; --yellow: #f2c94c; --blue: #89b4fa; --teal: #7fd1c7; --bash: #fd5db1;
+    --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { width: 960px; height: 540px; overflow: hidden; background: radial-gradient(circle at 50% 0%, #2a1d17, var(--bg) 70%);
-    color: var(--text); font: 15px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
-  #stage { position: relative; width: 960px; height: 540px; }
+  body { width: 960px; height: 540px; overflow: hidden; background: var(--bg); color: var(--text); font: 15px/23px var(--mono); }
+  #stage { position: relative; width: 960px; height: 540px; display: flex; flex-direction: column; padding: 14px 0 10px; }
 
-  #cap { position: absolute; left: 20px; right: 20px; top: 12px; height: 40px; display: flex; align-items: center; justify-content: space-between; }
-  #step { font-size: 22px; font-weight: 700; transition: none; }
-  #step b { color: var(--claude); margin-right: 10px; }
-  #any { font-size: 13px; color: var(--dim); }
-  #win { position: absolute; left: 20px; top: 60px; width: 920px; height: 466px; background: var(--term);
-    border: 1px solid #333; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.55);
-    display: flex; flex-direction: column; }
-  #bar { height: 30px; background: var(--bar); display: flex; align-items: center; padding: 0 12px; position: relative; flex: none; }
-  #bar i { width: 12px; height: 12px; border-radius: 6px; margin-right: 8px; }
-  #bar span { position: absolute; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--dim); }
+  #head { display: flex; align-items: center; gap: 16px; padding: 0 18px; flex: none; }
+  #head svg { width: 60px; height: 40px; }
+  #head .bold { color: #e3e6f5; }
 
-  #body { flex: 1; display: flex; flex-direction: column; padding: 10px 16px 8px; font: 15px/23px var(--mono); min-height: 0; }
-  #hist { flex: 1; overflow: hidden; position: relative; min-height: 0; }
-  #inner { position: absolute; left: 0; right: 0; top: 0; }
+  #hist { flex: 1; overflow: hidden; position: relative; min-height: 0; margin-top: 10px; padding: 0 18px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px); mask-image: linear-gradient(to bottom, transparent 0, #000 18px); }
+  #inner { padding-top: 6px; }
+  #inner { position: absolute; left: 18px; right: 18px; top: 0; }
   .l { white-space: pre; min-height: 23px; }
-  .welcome { border: 1px solid var(--claude); border-radius: 6px; padding: 4px 12px; width: 420px; margin-bottom: 8px; }
-  .user { color: var(--dim); background: #232323; margin: 6px 0; }
-  .bang { color: var(--bash); background: #232323; margin: 6px 0; }
-  .gap { margin-top: 12px; }
+  .user { background: var(--user); color: var(--text); margin: 6px 0; }
+  .user::before { content: "❯ "; color: var(--dim); }
+  .bang { background: var(--user); color: var(--bash); margin: 6px 0; }
+  .gap { margin-top: 10px; }
+  .elbow { display: inline-block; width: 1ch; }
   .dim { color: var(--dim); } .g { color: var(--green); } .r { color: var(--red); } .y { color: var(--yellow); }
   .c { color: var(--claude); } .bl { color: var(--blue); } .bold { font-weight: 700; }
 
-  #input { flex: none; margin-top: 6px; }
-  #box { border: 1px solid #555; border-radius: 6px; padding: 6px 10px; white-space: pre; }
-  #box.bash { border-color: var(--bash); }
-  #box.bash #prefix { color: var(--bash); }
+  #input { flex: none; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 5px 4px; margin-top: 6px; white-space: pre; }
+  #input.bash { border-color: var(--bash); }
+  #input.bash #prefix { color: var(--bash); }
+  #prefix { font-weight: 700; }
   #cursor { display: inline-block; width: 9px; height: 18px; background: var(--text); vertical-align: -3px; }
-  #hint { color: var(--dim); font-size: 12px; padding: 3px 10px 0; display: flex; justify-content: space-between; }
-
+  #foot { flex: none; padding: 6px 22px 0; line-height: 21px; }
+  #model { color: var(--teal); }
+  #mode { color: var(--dim); }
+  #mode b { color: var(--yellow); font-weight: 400; }
 </style>
 </head>
 <body>
 <div id="stage">
-  <div id="cap"><div id="step"></div><div id="any">works with any coding agent</div></div>
-  <div id="win">
-    <div id="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>~/shop - claude</span></div>
-    <div id="body">
-      <div id="hist"><div id="inner"></div></div>
-      <div id="input">
-        <div id="box"><span id="prefix">&gt; </span><span id="typed"></span><span id="cursor"></span></div>
-        <div id="hint"><span id="hintl">? for shortcuts</span></div>
-      </div>
-    </div>
+  <div id="head">
+    <svg viewBox="0 0 118 78" shape-rendering="crispEdges" fill="#d97757">
+      <rect x="14" y="0" width="90" height="62"/><rect x="0" y="32" width="118" height="14"/>
+      <rect x="14" y="62" width="8" height="16"/><rect x="28" y="62" width="8" height="16"/>
+      <rect x="83" y="62" width="8" height="16"/><rect x="97" y="62" width="8" height="16"/>
+      <rect x="28" y="17" width="7" height="14" fill="#111"/><rect x="83" y="17" width="7" height="14" fill="#111"/>
+    </svg>
+    <div><span class="bold">Claude Code</span> <span class="dim">v2.1.304</span><br><span class="dim">Sonnet 5.5 · Claude Max</span><br><span class="dim">~/shop</span></div>
   </div>
+  <div id="hist"><div id="inner"></div></div>
+  <div id="input"><span id="prefix">❯ </span><span id="typed"></span><span id="cursor"></span></div>
+  <div id="foot"><div id="model">Sonnet 5.5</div><div id="mode"><b>⏵⏵ auto mode on</b> (shift+tab to cycle)</div></div>
 </div>
 
 <script>
 const DURATION = 30;
 const OK = "✓", BULLET = "●", ELBOW = "⎿";
-
-// The step named above the window, so a viewer always knows where they are.
-const STEPS = [
-  { at: 0, text: "<b>1</b>Say what to test, in one sentence" },
-  { at: 5.2, text: "<b>2</b>Your agent writes it and proves it" },
-  { at: 14.6, text: "<b>3</b>You approve it" },
-  { at: 19.6, text: "<b>4</b>Every PR is checked. No AI, no internet" },
-];
 
 // What the person types into the prompt box; it lands in the history at `send`.
 const TYPING = [
@@ -80,14 +69,13 @@ const TYPING = [
 ];
 
 const tool = (name, arg) => `<span class="g">${BULLET}</span> <span class="bold">${name}</span>(${arg})`;
-const out = (html) => `  <span class="dim">${ELBOW}</span>  ${html}`;
+const out = (html) => `  <span class="dim elbow">${ELBOW}</span>  ${html}`;
 const more = (html) => `     ${html}`;
 const say = (html) => `${BULLET} ${html}`;
 
 // Each history line appears at `at`; `until` hides it again; `spin` makes it a spinner line.
 const HISTORY = [
-  { at: 0, cls: "welcome", html: `<span class="c">✻</span> <b>Welcome to Claude Code!</b>  <span class="dim">~/shop</span>` },
-  { at: 4.2, cls: "user", html: `&gt; ${TYPING[0].text}` },
+  { at: 4.2, cls: "user", html: TYPING[0].text },
   { at: 4.3, until: 5.4, spin: "Proofing" },
   { at: 5.4, cls: "gap", html: tool("Write", "e2e/specs/guest-checkout.md") },
   { at: 5.9, html: out(`<span class="y">R1</span> the order is stored as "processing"`) },
@@ -100,7 +88,7 @@ const HISTORY = [
   { at: 12.0, html: `  Check that, then approve it yourself.` },
   { at: 16.6, cls: "bang", html: `! ${TYPING[1].text}` },
   { at: 17.2, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
-  { at: 21.8, cls: "user", html: `&gt; ${TYPING[2].text}` },
+  { at: 21.8, cls: "user", html: TYPING[2].text },
   { at: 22.0, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
   { at: 22.1, until: 24.4, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
   { at: 24.4, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
@@ -136,15 +124,10 @@ function render(t) {
 
   const typing = TYPING.find((x) => t >= x.from && t < x.send);
   const bash = typing?.mode === "bash";
-  $("box").className = bash ? "bash" : "";
-  $("prefix").textContent = bash ? "! " : "> ";
-  $("hintl").textContent = bash ? "! for bash mode" : "? for shortcuts";
-  $("hintl").style.color = bash ? "var(--bash)" : "";
+  $("input").className = bash ? "bash" : "";
+  $("prefix").textContent = bash ? "! " : "❯ ";
   $("typed").textContent = typing ? typing.text.slice(0, Math.round(typing.text.length * clamp((t - typing.from) / (typing.to - typing.from)))) : "";
   $("cursor").style.opacity = typing || Math.floor(t * 2) % 2 === 0 ? 1 : 0;
-
-  const step = [...STEPS].reverse().find((x) => t >= x.at);
-  $("step").innerHTML = step.text;
 
   // Fade the end into the start so the loop is smooth.
   $("stage").style.opacity = Math.min(clamp(t / 0.3), clamp((DURATION - t) / 0.4));
