@@ -14,6 +14,14 @@ const SETUP_ASK = 'Ask your agent: "set up proofy". It follows the Setup section
 
 // Runs from session-start hooks: reads files only, never starts Docker, never exits non-zero.
 export async function homeCommand(deps: Deps): Promise<CommandResult | string> {
+  try {
+    return await home(deps);
+  } catch (error) {
+    return `proofy: could not read this project: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function home(deps: Deps): Promise<CommandResult | string> {
   const root = await findRoot(deps.cwd);
   const paths = pathsFor(root);
   const project = basename(root);

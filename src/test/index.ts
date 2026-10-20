@@ -149,9 +149,11 @@ export async function exec(name: string, args: string[] = []): Promise<string> {
   writeFileSync(join(MOUNT.exec, `${id}.req.tmp`), JSON.stringify({ name, args }));
   renameSync(join(MOUNT.exec, `${id}.req.tmp`), join(MOUNT.exec, `${id}.req.json`));
   const response = join(MOUNT.exec, `${id}.res.json`);
-  const deadline = Date.now() + 120_000;
+  // The host gives the command as long as a test may take, so wait that long too.
+  const limit = base.info().timeout || 120_000;
+  const deadline = Date.now() + limit;
   while (!existsSync(response)) {
-    if (Date.now() > deadline) throw new Error(`exec("${name}") got no answer within 2 minutes`);
+    if (Date.now() > deadline) throw new Error(`exec("${name}") got no answer within ${Math.round(limit / 1000)} seconds`);
     await sleep(100);
   }
   const result = JSON.parse(readFileSync(response, "utf8")) as { code: number; stdout: string; stderr: string; error?: string };

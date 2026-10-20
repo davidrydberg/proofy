@@ -285,7 +285,13 @@ export async function start(proc: Proc, options: SandboxOptions, sandbox: Sandbo
     if (up.code === 0) break;
     if (/overlap/i.test(up.stderr) && attempt < 5) {
       await stop(proc, current);
+      // prepare() starts from an empty folder; the assets were downloaded in the install phase, with internet.
+      const assets = join(current.workDir, "setup", "assets");
+      const kept = `${current.workDir}.assets`;
+      await rm(kept, { recursive: true, force: true });
+      const moved = await rename(assets, kept).then(() => true, () => false);
       current = await prepare(proc, options, attempt + 1);
+      if (moved) await rename(kept, assets);
       continue;
     }
     throw new CliError(up.timedOut ? "The sandbox did not start in time" : "The sandbox did not start", "ENVIRONMENT_ERROR", [
@@ -432,13 +438,17 @@ function startExecBridge(proc: Proc, options: SandboxOptions, sandbox: Sandbox):
   };
 }
 
+const ASSET_TIMEOUT_MS = 120_000;
+
 async function downloadAssets(options: SandboxOptions, sandbox: Sandbox): Promise<void> {
   if (options.config.assets.length === 0) return;
   const dir = join(sandbox.workDir, "setup", "assets");
   await mkdir(dir, { recursive: true });
   for (const url of options.config.assets) {
     options.log(`downloading ${url}`);
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(ASSET_TIMEOUT_MS) }).catch((error: unknown) => {
+      throw new CliError(`Downloading asset ${url} failed: ${error instanceof Error ? error.message : String(error)}`, "ENVIRONMENT_ERROR", ["Check the URL in e2e/proofy.json assets"]);
+    });
     if (!response.ok) throw new CliError(`Downloading asset ${url} failed with HTTP ${response.status}`, "ENVIRONMENT_ERROR", ["Check the URL in e2e/proofy.json assets"]);
     await writeFile(join(dir, assetFile(url)), Buffer.from(await response.arrayBuffer()));
   }

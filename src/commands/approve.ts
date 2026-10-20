@@ -21,7 +21,7 @@ export async function approveCommand(args: string[], deps: Deps): Promise<Comman
   const project = await loadProject(deps);
   const { paths, config, approvals } = project;
   if (!(await flowNames(paths)).includes(name)) throw new CliError(`No flow named ${name}`, "VALIDATION_ERROR", ["Run `proofy` to see flows"]);
-  if (!(await exists(join(paths.tests, `${name}.spec.ts`)))) throw new CliError(`${name} has no test yet`, "NOT_APPROVED", ["Ask your agent to write it"]);
+  if (!(await exists(join(paths.tests, `${name}.spec.ts`)))) throw new CliError(`${name} has requirements but no test yet`, "VALIDATION_ERROR", ["Ask your agent to write it (step 4 in e2e/AGENTS.md)"]);
 
   const [status] = await flowStatuses(paths, config, [name], approvals, await recentReports(paths));
   if (!status) throw new CliError(`No flow named ${name}`, "VALIDATION_ERROR");

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -202,13 +202,59 @@ describe("commands without Docker", () => {
 
   it("OS and editor litter in the fakes and tests folders never makes an approval out of date", async () => {
     const dir = await approvedProject();
-    mkdirSync(join(dir, "e2e/standins/.cache"), { recursive: true });
-    for (const file of ["e2e/standins/.DS_Store", "e2e/standins/.cache/x.mjs", "e2e/standins/pay.mjs~", "e2e/tests/.checkout.spec.ts.swp", "e2e/tests/helper.ts.swo"]) {
+    mkdirSync(join(dir, "e2e/standins"), { recursive: true });
+    for (const file of ["e2e/standins/.DS_Store", "e2e/standins/pay.mjs~", "e2e/tests/.checkout.spec.ts.swp", "e2e/tests/helper.ts.swo"]) {
       writeFileSync(join(dir, file), "litter\n");
     }
     expect((await cli([], dir)).out).toContain("checkout,approved");
     writeFileSync(join(dir, "e2e/standins/pay.mjs"), "export default {};\n");
     expect((await cli([], dir)).out).toContain('checkout,out-of-date,"changed since approval: fakes;');
+  });
+
+  it("hidden files and symlinks count, since a test or fake can import them", async () => {
+    const cases: Array<[string, string, (dir: string) => void]> = [
+      ["hidden helper", "test", (dir) => writeFileSync(join(dir, "e2e/tests/.helpers.ts"), "export const x = 1;\n")],
+      ["hidden folder", "fakes", (dir) => {
+        mkdirSync(join(dir, "e2e/standins/.shared"), { recursive: true });
+        writeFileSync(join(dir, "e2e/standins/.shared/pay.mjs"), "export default {};\n");
+      }],
+      ["symlinked fake", "fakes", (dir) => {
+        mkdirSync(join(dir, "e2e/standins"), { recursive: true });
+        writeFileSync(join(dir, "outside.mjs"), "export default {};\n");
+        symlinkSync(join(dir, "outside.mjs"), join(dir, "e2e/standins/linked.mjs"));
+      }],
+    ];
+    for (const [name, part, change] of cases) {
+      const dir = await approvedProject();
+      change(dir);
+      expect((await cli([], dir)).out, name).toContain(`checkout,out-of-date,"changed since approval: ${part};`);
+    }
+  });
+
+  it("the bare command exits 0 when a file it fingerprints cannot be read", async () => {
+    const dir = await approvedProject();
+    writeFileSync(join(dir, "e2e/tests/locked.ts"), "x\n");
+    chmodSync(join(dir, "e2e/tests/locked.ts"), 0o000);
+    symlinkSync(join(dir, "missing.ts"), join(dir, "e2e/tests/dangling.ts"));
+    const { code, out } = await cli([], dir);
+    expect(code).toBe(0);
+    expect(out).toContain("checkout,out-of-date");
+  });
+
+  it("a change behind a symlinked file or folder makes the approval out of date", async () => {
+    for (const target of ["shared.ts", "lib/h.ts"]) {
+      const dir = project();
+      writeFileSync(join(dir, "shared.ts"), "export const x = 1;\n");
+      mkdirSync(join(dir, "lib"));
+      writeFileSync(join(dir, "lib/h.ts"), "export const y = 1;\n");
+      symlinkSync(join(dir, "shared.ts"), join(dir, "e2e/tests/shared.ts"));
+      symlinkSync(join(dir, "lib"), join(dir, "e2e/tests/lib"));
+      for (const id of ["20261020-110000", "20261020-110100", "20261020-110200"]) await fakeRun(dir, id, ["pass", "pass"]);
+      expect((await cli(["approve", "checkout"], dir, noDocker, person("checkout"))).code).toBe(0);
+      expect((await cli([], dir)).out).toContain("checkout,approved");
+      writeFileSync(join(dir, target), "export const changed = true;\n");
+      expect((await cli([], dir)).out, target).toContain('checkout,out-of-date,"changed since approval: test;');
+    }
   });
 
   it("an approval from proofy 0.1, without config and compose fingerprints, reads as out of date", async () => {
