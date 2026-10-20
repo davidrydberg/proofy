@@ -7,6 +7,7 @@ You approve them, and every `proofy run` checks the app in a sealed Docker sandb
 
 The sandbox has no way out.
 Every outside call goes to a fake the agent wrote from the provider's docs, gets recorded, or is refused and listed in the report.
+proofy refuses to start a service whose compose settings would break the seal: `network_mode`, `privileged`, `cap_add`, a host `pid`, `ipc`, `uts` or `userns_mode`, `devices`, or a mount of the Docker or containerd socket.
 
 ![How proofy works: you describe a test, your agent writes requirements, a test and fakes, you approve, every run is sealed in Docker, and the report shows evidence per requirement](docs/overview.gif)
 

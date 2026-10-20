@@ -3,6 +3,7 @@ import { proven } from "../src/run/history.js";
 import { renderMarkdown, verdict } from "../src/run/report.js";
 import { flowResult, type FlowResult, type PlannedFlow, type RunReport } from "../src/run/results.js";
 import { parseRequirements } from "../src/run/spec.js";
+import { sameJson, showValue } from "../src/test/compare.js";
 import type { Entry } from "../src/test/index.js";
 
 const plan: PlannedFlow = {
@@ -50,6 +51,38 @@ describe("results", () => {
     expect(proven([unchecked, unchecked, unchecked])).toMatchObject({ ok: false, reason: "no claim checks R4" });
   });
 
+  it("decides a claim without ok by comparing expected and actual, again on the host", () => {
+    const compared = (spec: string, expected: unknown, actual: unknown, ok: boolean): Entry => ({ type: "claim", test: "t", spec, did: "did", expected, actual, ok, compared: true, fakes: [] });
+    const flow = flowResult(
+      plan,
+      [
+        compared("R1", { status: "paid", total: 120, items: [{ sku: "A" }] }, { items: [{ sku: "A" }], total: 120, status: "paid" }, true),
+        // The recorded ok says pass, but the values differ: the host's comparison wins.
+        compared("R2", 3, "3", true),
+        compared("R3", "processing", "processing ", false),
+        claim("R4", true, { expected: "a pattern", actual: { n: 1 } }),
+      ],
+      [{ title: "t", status: "failed", durationMs: 10, error: "Requirements not met: R3" }],
+    );
+    expect(flow.requirements.map((r) => `${r.id}:${r.result}:${r.decidedBy}`)).toEqual(["R1:pass:proofy", "R2:fail:proofy", "R3:fail:proofy", "R4:pass:test"]);
+    expect(flow.requirements[1]).toMatchObject({ expected: "3", actual: '"3"' });
+    expect(flow.requirements[2]).toMatchObject({ expected: '"processing"', actual: '"processing "' });
+    expect(flow.requirements[3]).toMatchObject({ expected: "a pattern", actual: '{"n":1}' });
+    const md = renderMarkdown({ id: "x", kind: "run", startedAt: "", finishedAt: "", source: {}, flows: [flow], outside: [], lookedUpOnly: [], notes: [] }, (path) => path);
+    expect(md).toContain('| R1 | pass, proofy compared | Order number shown. | did | {"status":"paid","total":120,"items":[{"sku":"A"}]} |');
+    expect(md).toContain("| R4 | pass, test decided |");
+  });
+
+  it("compares claim values as JSON", () => {
+    expect(sameJson({ a: 1, b: [1, 2] }, { b: [1, 2], a: 1 })).toBe(true);
+    expect(sameJson({ a: undefined }, {})).toBe(true);
+    expect(sameJson([1, 2], [2, 1])).toBe(false);
+    expect(sameJson(1, "1")).toBe(false);
+    expect(sameJson(null, undefined)).toBe(false);
+    expect(showValue(undefined, true)).toBe("undefined");
+    expect(showValue("words", false)).toBe("words");
+  });
+
   it("gives a verdict that matches the exit code contract and renders the report", () => {
     const flow = flowResult(plan, [claim("R1", true), claim("R2", false), claim("R3", true), { type: "not-covered", test: "t", spec: "R4", why: "sealed" }], passed);
     const report: RunReport = { id: "20261020-120000", kind: "run", startedAt: "", finishedAt: "", source: { commit: "abcdef1234567890" }, flows: [flow], outside: [{ host: "evil.test", handledAs: "refused", count: 2 }], lookedUpOnly: ["smtp.mail.test"], notes: [] };
@@ -58,9 +91,14 @@ describe("results", () => {
     expect(verdict({ ...report, environmentError: "x" })).toBe("environment");
     expect(verdict({ ...report, flows: [] })).toBe("pass");
     const md = renderMarkdown(report, (path) => `https://x/${path}`);
-    expect(md).toContain("| R2 | FAIL | Paid order stored. | did | e | a | none |");
+    expect(md).toContain("| R2 | FAIL, test decided | Paid order stored. | did | e | a | none |");
+    expect(md).toContain("test decided: the test passed its own result");
     expect(md).toContain("| R4 | not covered |");
     expect(md).toContain("Refused: evil.test.");
     expect(md).toContain("smtp.mail.test");
+    expect(md).not.toContain("<summary>Images</summary>");
+    const withImages = renderMarkdown({ ...report, images: [{ service: "web", image: "shop", id: "sha256:aaa" }, { service: "db", image: "mariadb:11", id: "sha256:bbb", digest: "mariadb@sha256:ccc" }] }, (path) => path);
+    expect(withImages).toContain("| web | shop | sha256:aaa | none |");
+    expect(withImages).toContain("| db | mariadb:11 | sha256:bbb | mariadb@sha256:ccc |");
   });
 });

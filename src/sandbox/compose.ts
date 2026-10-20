@@ -60,9 +60,10 @@ export function sandboxCompose(inputs: ComposeInputs): Generated {
       throw new CliError(`The compose service name "${name}" is reserved by proofy`, "CONFIG_INVALID", ["Rename the service in your compose file"]);
     }
     const service: Service = { ...original };
-    if (service.network_mode !== undefined) {
-      throw new CliError(`Service ${name} sets network_mode, which would bypass the sealed network`, "CONFIG_INVALID", [
-        "Remove network_mode from the compose file proofy uses",
+    const breach = sealBreach(service, (model.volumes ?? {}) as Record<string, unknown>);
+    if (breach) {
+      throw new CliError(`Service ${name} sets ${breach.setting}, which would ${breach.why}`, "CONFIG_INVALID", [
+        `Remove ${breach.setting} from the compose file proofy uses`,
       ]);
     }
     if (service.env_file !== undefined) {
@@ -143,6 +144,47 @@ export function subnetFor(seed: string, attempt: number): { subnet: string; stan
   const second = 200 + (hash % 50);
   const third = (hash >>> 8) % 256;
   return { subnet: `10.${second}.${third}.0/24`, standinIp: `10.${second}.${third}.53` };
+}
+
+// Host paths a Docker or containerd socket lives at. Mounting one, or a folder holding one, lets a container
+// start other containers outside the seal.
+const SOCKETS = ["/var/run/docker.sock", "/run/docker.sock", "/var/run/containerd/containerd.sock", "/run/containerd/containerd.sock"];
+const SOCKET_NAME = /(^|\/)(docker|containerd|podman)\.sock$/;
+// Rootless Docker keeps its socket in the user's runtime folder, /run/user/<uid>/docker.sock.
+const ROOTLESS = /^(\/var)?\/run\/user(\/\d+)?$/;
+
+/** The first service setting that would let the service out of the sealed sandbox. */
+function sealBreach(service: Service, topVolumes: Record<string, unknown>): { setting: string; why: string } | undefined {
+  if (service.network_mode !== undefined) return { setting: "network_mode", why: "bypass the sealed network" };
+  if (service.privileged === true) return { setting: "privileged", why: "give it the host's devices and network controls" };
+  if (Array.isArray(service.cap_add) && service.cap_add.length > 0) return { setting: "cap_add", why: "give it powers beyond the sandbox's" };
+  for (const key of ["pid", "ipc", "uts", "userns_mode"]) {
+    if (service[key] === "host") return { setting: `${key}: host`, why: "share the host's namespace" };
+  }
+  if (Array.isArray(service.devices) && service.devices.length > 0) return { setting: "devices", why: "give it the host's devices" };
+  for (const volume of (service.volumes ?? []) as unknown[]) {
+    const mount = hostMount(volume, topVolumes);
+    if (mount && exposesSocket(mount.source)) return { setting: mount.setting, why: "let it control Docker on the host" };
+  }
+  return undefined;
+}
+
+/** The host folder a service volume shows: a bind mount, or a named volume whose driver options bind a host path. */
+function hostMount(volume: unknown, topVolumes: Record<string, unknown>): { source: string; setting: string } | undefined {
+  if (!volume || typeof volume !== "object") return undefined;
+  const { type, source } = volume as { type?: unknown; source?: unknown };
+  if (typeof source !== "string") return undefined;
+  if (type === "bind") return { source, setting: `a bind mount of ${source}` };
+  if (type !== "volume") return undefined;
+  const options = (topVolumes[source] as { driver_opts?: { o?: unknown; device?: unknown } } | null | undefined)?.driver_opts;
+  if (typeof options?.o !== "string" || typeof options.device !== "string") return undefined;
+  if (!options.o.split(",").some((option) => ["bind", "rbind"].includes(option.trim()))) return undefined;
+  return { source: options.device, setting: `volume ${source}, a bind mount of ${options.device}` };
+}
+
+function exposesSocket(source: string): boolean {
+  const path = source.replace(/\/+$/, "");
+  return SOCKET_NAME.test(path) || ROOTLESS.test(path) || SOCKETS.some((socket) => socket === path || socket.startsWith(`${path}/`));
 }
 
 function aliasesOf(networks: unknown): string[] {

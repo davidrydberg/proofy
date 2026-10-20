@@ -62,7 +62,7 @@ Do this once, when the human asks you to set up proofy.
 3. **Walk it.** Start `proofy dev up`, open the app address it prints and go through the flow once by hand to learn the buttons and fields. chrome-devtools-axi or Playwright's own tools are fine here. If the app redirects to its in-sandbox name, learn the page from its templates instead, or from a first draft of the test with `shot()` after each step.
 4. **Test.** Write `tests/<flow>.spec.ts` from `templates/test.spec.ts`. Import only from `@davidrydberg/proofy/test` and Node's built-in modules; nothing else is installed in the runner. From that module:
    - `test`, `expect`: Playwright's, with proofy's bookkeeping. The browser starts at the `app` address.
-   - `claim({ spec, did, expected, actual, ok, evidence })`: one per requirement, citing its number. `ok` comes from real values.
+   - `claim({ spec, did, expected, actual, evidence })`: one per requirement, citing its number. Give `expected` and `actual` as values of the same shape, such as `{ status: "paid", total: 120 }`, and leave out `ok`: proofy compares them, so the result always follows from the values the report shows. A pattern check goes into `actual` as a value, such as `actual: { orderNumber: /^\d+$/.test(orderNumber) }`. Pass `ok`, decided from real values, only for a check equality cannot express, such as a range or "only these recipients"; the report marks those claims as decided by the test.
    - `notCovered(spec, why)`: for what the sandbox cannot show, such as a payment inside a provider's own card fields.
    - `shot(label)`: a screenshot after every meaningful step.
    - `tag()`: a value unique to the test for names, emails and phone numbers.
