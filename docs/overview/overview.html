@@ -4,161 +4,155 @@
 <meta charset="utf-8">
 <title>proofy overview</title>
 <style>
-  /* Catppuccin Mocha: a plain terminal, no window, no agent branding. */
   :root {
-    --base: #1e1e2e; --text: #cdd6f4; --dim: #7f849c; --surface: #313244;
-    --green: #a6e3a1; --red: #f38ba8; --yellow: #f9e2af; --blue: #89b4fa; --mauve: #cba6f7; --teal: #94e2d5; --peach: #fab387;
-    --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --bg: #0b0b0c; --term: #181818; --bar: #252526; --text: #e8e8e8; --dim: #8a8a8a;
+    --claude: #d77757; --green: #4eba65; --red: #ff6b80; --yellow: #e5c07b; --blue: #7aa7f7; --bash: #fd5db1;
+    --mono: "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { width: 1100px; height: 650px; overflow: hidden; background: var(--base); color: var(--text); font: 15px/22px var(--mono); }
-  #stage { position: relative; width: 1100px; height: 650px; padding: 26px 30px; }
-  #hist { position: relative; width: 100%; height: 100%; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px); mask-image: linear-gradient(to bottom, transparent 0, #000 26px); }
+  body { width: 960px; height: 540px; overflow: hidden; background: radial-gradient(circle at 50% 0%, #2a1d17, var(--bg) 70%);
+    color: var(--text); font: 15px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  #stage { position: relative; width: 960px; height: 540px; }
+
+  #cap { position: absolute; left: 20px; right: 20px; top: 12px; height: 40px; display: flex; align-items: center; justify-content: space-between; }
+  #step { font-size: 22px; font-weight: 700; transition: none; }
+  #step b { color: var(--claude); margin-right: 10px; }
+  #any { font-size: 13px; color: var(--dim); }
+  #win { position: absolute; left: 20px; top: 60px; width: 920px; height: 466px; background: var(--term);
+    border: 1px solid #333; border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.55);
+    display: flex; flex-direction: column; }
+  #bar { height: 30px; background: var(--bar); display: flex; align-items: center; padding: 0 12px; position: relative; flex: none; }
+  #bar i { width: 12px; height: 12px; border-radius: 6px; margin-right: 8px; }
+  #bar span { position: absolute; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--dim); }
+
+  #body { flex: 1; display: flex; flex-direction: column; padding: 10px 16px 8px; font: 15px/23px var(--mono); min-height: 0; }
+  #hist { flex: 1; overflow: hidden; position: relative; min-height: 0; }
   #inner { position: absolute; left: 0; right: 0; top: 0; }
-  .l { white-space: pre; min-height: 22px; }
-  .gap { margin-top: 10px; }
+  .l { white-space: pre; min-height: 23px; }
+  .welcome { border: 1px solid var(--claude); border-radius: 6px; padding: 4px 12px; width: 420px; margin-bottom: 8px; }
+  .user { color: var(--dim); background: #232323; margin: 6px 0; }
+  .bang { color: var(--bash); background: #232323; margin: 6px 0; }
+  .gap { margin-top: 12px; }
   .dim { color: var(--dim); } .g { color: var(--green); } .r { color: var(--red); } .y { color: var(--yellow); }
-  .b { color: var(--blue); } .m { color: var(--mauve); } .t { color: var(--teal); } .p { color: var(--peach); } .bold { font-weight: 700; }
-  #cursor { display: inline-block; width: 9px; height: 18px; background: #f5e0dc; vertical-align: -4px; }
+  .c { color: var(--claude); } .bl { color: var(--blue); } .bold { font-weight: 700; }
+
+  #input { flex: none; margin-top: 6px; }
+  #box { border: 1px solid #555; border-radius: 6px; padding: 6px 10px; white-space: pre; }
+  #box.bash { border-color: var(--bash); }
+  #box.bash #prefix { color: var(--bash); }
+  #cursor { display: inline-block; width: 9px; height: 18px; background: var(--text); vertical-align: -3px; }
+  #hint { color: var(--dim); font-size: 12px; padding: 3px 10px 0; display: flex; justify-content: space-between; }
+
 </style>
 </head>
 <body>
-<div id="stage"><div id="hist"><div id="inner"></div></div></div>
+<div id="stage">
+  <div id="cap"><div id="step"></div><div id="any">works with any coding agent</div></div>
+  <div id="win">
+    <div id="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>~/shop - claude</span></div>
+    <div id="body">
+      <div id="hist"><div id="inner"></div></div>
+      <div id="input">
+        <div id="box"><span id="prefix">&gt; </span><span id="typed"></span><span id="cursor"></span></div>
+        <div id="hint"><span id="hintl">? for shortcuts</span></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
-const DURATION = 45;
-const OK = "✓", FAIL = "✗", DOT = "•";
+const DURATION = 30;
+const OK = "✓", BULLET = "●", ELBOW = "⎿";
 
-// Prompts: the shell's, and a coding agent's. Any agent works; this one has no name on purpose.
-const SHELL = `<span class="b">&gt;</span> `;
-const AGENT = `<span class="m">›</span> `;
-const act = (verb, arg, note = "") => `<span class="m">${DOT}</span> <span class="bold">${verb}</span> ${arg}${note ? `  <span class="dim">${note}</span>` : ""}`;
-const sub = (html) => `    ${html}`;
-
-// Each line appears at `at`; `until` hides it again. A line with `type` is typed out between `at` and `to` after its prompt.
-// A line with `spin` is a spinner until `until`.
-const LINES = [
-  // proofy init: what it found and what it wrote.
-  { at: 0.3, to: 1.2, prompt: SHELL, type: "proofy init" },
-  { at: 1.6, cls: "gap", html: `<span class="bold">proofy init</span>  ~/shop` },
-  { at: 1.75, cls: "gap", html: `<span class="bold">FOUND</span>` },
-  { at: 1.85, html: `  compose.yml: services web, db` },
-  { at: 1.95, html: `  app: likely web on port 80` },
-  { at: 2.05, html: `  .env.example: 14 settings, 3 secret-looking values replaced with fakes` },
-  { at: 2.15, html: `  recorded: www.googletagmanager.com <span class="dim">(analytics: the app does not need their answer)</span>` },
-  { at: 2.25, html: `  outside hosts for your agent to fake or record: api.shipping.example` },
-  { at: 2.45, cls: "gap", html: `<span class="bold">WROTE</span>` },
-  { at: 2.55, html: `  <span class="g">${OK}</span> e2e/proofy.json   <span class="g">${OK}</span> e2e/AGENTS.md   <span class="g">${OK}</span> e2e/templates/   <span class="g">${OK}</span> AGENTS.md (pointer)` },
-  { at: 2.75, cls: "gap", html: `<span class="bold">NEXT</span>` },
-  { at: 2.85, html: `  Tell your agent what to test, in plain words: "add a proofy test: ..."` },
-
-  // Any coding agent: it reads e2e/AGENTS.md and works without stopping to ask.
-  { at: 4.6, to: 5.9, cls: "gap", prompt: SHELL, type: "# any coding agent works" },
-  { at: 6.2, to: 6.6, prompt: SHELL, type: "agent" },
-  { at: 6.9, cls: "gap", html: `<span class="dim">agent  ~/shop</span>` },
-  { at: 7.2, to: 9.6, cls: "gap", prompt: AGENT, type: "add a proofy test: a guest can buy a product and gets a confirmation email" },
-  { at: 9.9, cls: "gap", html: act("read", "e2e/AGENTS.md") },
-  { at: 10.5, html: act("write", "e2e/specs/guest-checkout.md") },
-  { at: 10.7, html: sub(`<span class="y">R1</span> the thank-you page shows the order number`) },
-  { at: 10.85, html: sub(`<span class="y">R2</span> the order is stored as "processing", 249.00 SEK`) },
-  { at: 11.0, html: sub(`<span class="y">R3</span> the guest gets exactly one confirmation email`) },
-  { at: 11.15, html: sub(`<span class="y">R4</span> stock goes down by one`) },
-  { at: 11.3, html: sub(`<span class="r">R5</span> never: an email to anyone but the guest`) },
-  { at: 11.45, html: sub(`<span class="p">assumed</span> pays by bank transfer, ships to Sweden`) },
-  { at: 12.0, html: act("run", "proofy dev up", "built, sealed, seeded") },
-  { at: 12.6, html: act("write", "e2e/tests/guest-checkout.spec.ts") },
-  { at: 13.1, html: act("write", "e2e/standins/api.shipping.example.mjs", "from the provider's public docs") },
-  { at: 13.7, until: 15.6, spin: "proofy dev test guest-checkout" },
-  { at: 15.6, html: act("run", "proofy dev test guest-checkout", "3 of 3 runs identical") },
-  { at: 16.2, until: 17.4, spin: "second opinion" },
-  { at: 17.4, html: act("check", "second opinion", "tightened R3 to exactly one email") },
-  { at: 18.1, cls: "gap", html: `Ready for you to approve. I assumed:` },
-  { at: 18.3, html: `  <span class="p">!</span> the guest pays by bank transfer` },
-  { at: 18.45, html: `  <span class="p">!</span> shipping goes to Sweden, so the total includes 49.00 SEK` },
-  { at: 18.7, html: `Correct me in one sentence, or run <span class="b">proofy approve guest-checkout</span>` },
-  { at: 20.6, to: 21.0, cls: "gap", prompt: AGENT, type: "exit" },
-
-  // Only the person approves, after one review screen.
-  { at: 21.6, to: 23.1, cls: "gap", prompt: SHELL, type: "proofy approve guest-checkout" },
-  { at: 23.5, cls: "gap", html: `<span class="bold">Review guest-checkout before you approve it</span>` },
-  { at: 23.65, cls: "gap", html: `Requirements, the same in each of the last 3 runs:` },
-  { at: 23.75, html: `  <span class="g">${OK}</span> R1 the thank-you page shows the order number` },
-  { at: 23.85, html: `  <span class="g">${OK}</span> R2 the order is stored as "processing", 249.00 SEK` },
-  { at: 23.95, html: `  <span class="g">${OK}</span> R3 the guest gets exactly one confirmation email` },
-  { at: 24.05, html: `  <span class="g">${OK}</span> R4 stock goes down by one` },
-  { at: 24.15, html: `  <span class="g">${OK}</span> R5 never: an email to anyone but the guest` },
-  { at: 24.35, cls: "gap", html: `<span class="y">Assumed by the agent, not said by you:</span>` },
-  { at: 24.45, html: `  <span class="y">!</span> the guest pays by bank transfer` },
-  { at: 24.55, html: `  <span class="y">!</span> shipping goes to Sweden, so the total includes 49.00 SEK` },
-  { at: 24.75, cls: "gap", html: `Evidence and screenshots: e2e/out/20261020-091200/report.md` },
-  { at: 24.95, cls: "gap", html: `Approving trusts the requirements, test and fakes, e2e/proofy.json and the compose files as they are now.` },
-  { at: 25.05, html: `Anything wrong? Press Enter, tell your agent in one sentence, and approve once it has proven the flow again.` },
-  { at: 26.6, to: 27.8, prompt: `Type guest-checkout to approve it: `, type: "guest-checkout" },
-  { at: 28.1, html: `flow: guest-checkout` },
-  { at: 28.15, html: `state: <span class="g">approved</span>` },
-  { at: 28.25, html: `<span class="dim">Commit e2e/proofy.lock.json with the flow's files</span>` },
-
-  // Every run after that: sealed, no AI, evidence per requirement, posted on the pull request.
-  { at: 30.0, to: 31.6, cls: "gap", prompt: SHELL, type: "proofy run --all --pr 42 --post" },
-  { at: 31.9, until: 33.0, html: `<span class="dim">fetching PR 42, building the images (online)</span>` },
-  { at: 33.0, until: 34.0, html: `<span class="dim">network sealed: no AI, no internet</span>` },
-  { at: 34.0, until: 35.3, spin: "guest-checkout in a fresh sandbox" },
-  { at: 35.3, cls: "gap", html: `<span class="g bold">PASS  every requirement of every approved flow held</span>` },
-  { at: 35.4, html: `<span class="dim">run 20261020-091512  e2e/out/20261020-091512</span>` },
-  { at: 35.7, cls: "gap", html: `<span class="bold">guest-checkout</span>  <span class="g">passed</span>` },
-  { at: 35.9, html: `  <span class="g">${OK}</span> R1   the thank-you page shows the order number` },
-  { at: 36.05, html: `  <span class="g">${OK}</span> R2   the order is stored as "processing", 249.00 SEK` },
-  { at: 36.2, html: `  <span class="g">${OK}</span> R3   the guest gets exactly one confirmation email` },
-  { at: 36.35, html: `  <span class="g">${OK}</span> R4   stock goes down by one` },
-  { at: 36.5, html: `  <span class="g">${OK}</span> R5   never: an email to anyone but the guest` },
-  { at: 36.9, cls: "gap", html: `<span class="bold">OUTSIDE CALLS</span>` },
-  { at: 37.0, html: `  api.shipping.example fake x2, www.googletagmanager.com record x1` },
-  { at: 37.4, cls: "gap", html: `posted on github.com/you/shop/pull/42` },
-  { at: 38.0, cls: "gap", prompt: SHELL, html: "" },
+// The step named above the window, so a viewer always knows where they are.
+const STEPS = [
+  { at: 0, text: "<b>1</b>Say what to test, in one sentence" },
+  { at: 5.2, text: "<b>2</b>Your agent writes it and proves it" },
+  { at: 14.6, text: "<b>3</b>You approve it" },
+  { at: 19.6, text: "<b>4</b>Every PR is checked. No AI, no internet" },
 ];
 
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// What the person types into the prompt box; it lands in the history at `send`.
+const TYPING = [
+  { from: 0.8, to: 3.6, send: 4.2, mode: "prompt", text: "add a proofy test: a guest can buy a product and gets an email" },
+  { from: 15.0, to: 16.2, send: 16.6, mode: "bash", text: "proofy approve guest-checkout" },
+  { from: 20.0, to: 21.4, send: 21.8, mode: "prompt", text: "check every approved flow on PR 42" },
+];
+
+const tool = (name, arg) => `<span class="g">${BULLET}</span> <span class="bold">${name}</span>(${arg})`;
+const out = (html) => `  <span class="dim">${ELBOW}</span>  ${html}`;
+const more = (html) => `     ${html}`;
+const say = (html) => `${BULLET} ${html}`;
+
+// Each history line appears at `at`; `until` hides it again; `spin` makes it a spinner line.
+const HISTORY = [
+  { at: 0, cls: "welcome", html: `<span class="c">✻</span> <b>Welcome to Claude Code!</b>  <span class="dim">~/shop</span>` },
+  { at: 4.2, cls: "user", html: `&gt; ${TYPING[0].text}` },
+  { at: 4.3, until: 5.4, spin: "Proofing" },
+  { at: 5.4, cls: "gap", html: tool("Write", "e2e/specs/guest-checkout.md") },
+  { at: 5.9, html: out(`<span class="y">R1</span> the order is stored as "processing"`) },
+  { at: 6.4, html: more(`<span class="y">R2</span> the guest gets exactly one email`) },
+  { at: 6.9, html: more(`<span class="r">R3</span> never: mail to anyone else`) },
+  { at: 7.9, cls: "gap", html: tool("Bash", "proofy dev test guest-checkout") },
+  { at: 8.0, until: 10.4, html: out(`<span class="dim">Running in a sealed sandbox...</span>`) },
+  { at: 10.4, html: out(`<span class="g">${OK}</span> 3 of 3 runs identical`) },
+  { at: 11.4, cls: "gap", html: say(`Done. I assumed the guest pays by card.`) },
+  { at: 12.0, html: `  Check that, then approve it yourself.` },
+  { at: 16.6, cls: "bang", html: `! ${TYPING[1].text}` },
+  { at: 17.2, html: out(`<span class="g">${OK} approved</span> guest-checkout`) },
+  { at: 21.8, cls: "user", html: `&gt; ${TYPING[2].text}` },
+  { at: 22.0, cls: "gap", html: tool("Bash", "proofy run --all --pr 42 --post") },
+  { at: 22.1, until: 24.4, html: out(`<span class="dim">Running sealed: no AI, no internet...</span>`) },
+  { at: 24.4, html: out(`<span class="g bold">PASS</span>  guest-checkout  <span class="g">${OK} R1  ${OK} R2  ${OK} R3</span>`) },
+  { at: 25.2, cls: "gap", html: say(`All requirements held. Evidence is posted on PR 42.`) },
+];
+
+const SPINNER = ["·", "✢", "✳", "✶", "✻", "✽"];
 const $ = (id) => document.getElementById(id);
 const clamp = (x) => Math.max(0, Math.min(1, x));
-const cursor = `<span id="cursor"></span>`;
 
 const inner = $("inner");
-const rows = LINES.map((line) => {
+const rows = HISTORY.map((entry) => {
   const el = document.createElement("div");
-  el.className = "l " + (line.cls ?? "");
+  el.className = "l " + (entry.spin ? "gap" : entry.cls ?? "");
+  el.innerHTML = entry.html ?? "";
   inner.appendChild(el);
   return el;
 });
 
 function render(t) {
-  const visible = LINES.map((line) => t >= line.at && (line.until === undefined || t < line.until));
-  const last = visible.lastIndexOf(true);
-  LINES.forEach((line, i) => {
-    rows[i].style.display = visible[i] ? "" : "none";
-    if (!visible[i]) return;
-    if (line.spin) {
-      rows[i].innerHTML = `<span class="m">${SPINNER[Math.floor(t * 12) % SPINNER.length]}</span> <span class="dim">${line.spin}</span>`;
-    } else if (line.prompt !== undefined) {
-      const text = line.type ?? "";
-      const shown = line.to === undefined ? text : text.slice(0, Math.round(text.length * clamp((t - line.at) / (line.to - line.at))));
-      // The cursor sits on the newest line while it is a prompt: solid while typing, blinking while it waits.
-      const typing = line.to !== undefined && t < line.to;
-      const blink = typing || Math.floor(t * 2) % 2 === 0;
-      rows[i].innerHTML = `${line.prompt}${shown.replace(/</g, "&lt;")}${i === last && blink ? cursor : ""}`;
-    } else {
-      rows[i].innerHTML = line.html;
+  HISTORY.forEach((entry, i) => {
+    const visible = t >= entry.at && (entry.until === undefined || t < entry.until);
+    rows[i].style.display = visible ? "" : "none";
+    if (visible && entry.spin) {
+      const glyph = SPINNER[Math.floor(t * 8) % SPINNER.length];
+      const secs = Math.floor(t - entry.at) + 1;
+      rows[i].innerHTML = `<span class="c">${glyph} ${entry.spin}...</span> <span class="dim">(${secs}s · esc to interrupt)</span>`;
     }
   });
   // Keep the newest line in view, like a terminal that scrolls.
   const overflow = inner.offsetHeight - $("hist").clientHeight;
   inner.style.transform = `translateY(${-Math.max(0, overflow)}px)`;
+
+  const typing = TYPING.find((x) => t >= x.from && t < x.send);
+  const bash = typing?.mode === "bash";
+  $("box").className = bash ? "bash" : "";
+  $("prefix").textContent = bash ? "! " : "> ";
+  $("hintl").textContent = bash ? "! for bash mode" : "? for shortcuts";
+  $("hintl").style.color = bash ? "var(--bash)" : "";
+  $("typed").textContent = typing ? typing.text.slice(0, Math.round(typing.text.length * clamp((t - typing.from) / (typing.to - typing.from)))) : "";
+  $("cursor").style.opacity = typing || Math.floor(t * 2) % 2 === 0 ? 1 : 0;
+
+  const step = [...STEPS].reverse().find((x) => t >= x.at);
+  $("step").innerHTML = step.text;
+
   // Fade the end into the start so the loop is smooth.
   $("stage").style.opacity = Math.min(clamp(t / 0.3), clamp((DURATION - t) / 0.4));
 }
 
 window.DURATION = DURATION;
 window.render = render;
-render(new URLSearchParams(location.search).has("t") ? Number(new URLSearchParams(location.search).get("t")) : 19);
+render(new URLSearchParams(location.search).has("t") ? Number(new URLSearchParams(location.search).get("t")) : 26);
 </script>
 </body>
 </html>
